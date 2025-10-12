@@ -30,6 +30,7 @@ class VslzrToy : Service() {
                 override fun onServiceConnected(name: ComponentName) {
                     m.register("23111")
                     startEngine()
+                    android.util.Log.d("VSLZR", "registered + engine started")
                 }
                 override fun onServiceDisconnected(name: ComponentName) {}
             })
@@ -37,14 +38,30 @@ class VslzrToy : Service() {
         return messenger.binder
     }
 
+    private fun pushBlack() {
+        try { gm?.setMatrixFrame(IntArray(25*25) { 0 }) } catch (_: Throwable) {}
+        try { /* optional if available in your AAR */ gm?.turnOff() } catch (_: Throwable) {}
+    }
+
     override fun onUnbind(intent: Intent): Boolean {
         engine?.stop(); engine = null
-        gm?.unInit(); gm = null
+        pushBlack()
+        try { gm?.unInit() } catch (_: Throwable) {}
+        gm = null
         return false
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        engine?.stop(); engine = null
+        pushBlack()
+    }
+
     private fun startEngine() {
-        val push: (IntArray) -> Unit = { frame -> gm?.setMatrixFrame(frame) }
+        val push: (IntArray) -> Unit = { frame ->
+            android.util.Log.d("VSLZR", "push ${frame.size}")
+            gm?.setMatrixFrame(frame)
+        }
         engine = RenderEngine(this, push).apply { start() }
     }
 }

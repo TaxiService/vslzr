@@ -49,6 +49,8 @@ class RenderEngine(
             val fft = ByteArray(vis?.captureSize ?: 2048)
             var lastBattRead = 0L
             var battPct = readBattery()
+            for (y in 0 until 25) for (x in 0 until 25) buf[y][x] = if ((x + y) % 2 == 0) 64 else 0
+            push(blit())
             while (running) {
                 val now = SystemClock.elapsedRealtime()
                 if (now - lastBattRead > 1_000L) { battPct = readBattery(); lastBattRead = now }
@@ -59,11 +61,11 @@ class RenderEngine(
                 drawHHMM(t.hour, t.minute, colonOn, x = 4, y = 2, bright = BRIGHT_HHMM)
                 drawBattery(battPct, x = 3, y = 17, bright = BRIGHT_BATT)
 
-                if (MediaBridge.isPlaying(ctx) && vis != null) {
-                    vis!!.getFft(fft)
-                    val mags = compressFft(fft, bars = 12)
-                    drawBars(mags, baseBright = BRIGHT_VIZ)
-                }
+//                if (MediaBridge.isPlaying(ctx) && vis != null) {
+//                    vis!!.getFft(fft)
+//                    val mags = compressFft(fft, bars = 12)
+//                    drawBars(mags, baseBright = BRIGHT_VIZ)
+//                }
 
                 push(blit())
                 delay(33)
@@ -88,12 +90,11 @@ class RenderEngine(
     private fun setMax(x: Int, y: Int, v: Int) {
         if (x in 0..24 && y in 0..24) buf[y][x] = max(buf[y][x], v.coerceIn(0, 255))
     }
-    private fun gray(v: Int) = (0xFF shl 24) or (v shl 16) or (v shl 8) or v
 
     private fun blit(): IntArray {
         val out = IntArray(25 * 25)
         var k = 0
-        for (y in 0 until 25) for (x in 0 until 25) out[k++] = gray(buf[y][x])
+        for (y in 0 until 25) for (x in 0 until 25) out[k++] = buf[y][x].coerceIn(0, 255)
         return out
     }
 
