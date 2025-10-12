@@ -1,38 +1,44 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest package="dev.taxi.vslzr" xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Required by the Glyph SDK -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="dev.taxi.vslzr">
+
+    <!-- Nothing Glyph SDK -->
     <uses-permission android:name="com.nothing.ketchum.permission.ENABLE"/>
-    <!-- Needed for Visualizer -->
+
+    <!-- Visualizer (FFT) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
-    <!-- To detect active media sessions -->
-    <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"/>
 
     <application
         android:allowBackup="true"
-        android:dataExtractionRules="@xml/data_extraction_rules"
-        android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
-        android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Vslzr">
-        <!-- Glyph Toy registration -->
+
+        <!-- Glyph Toy service -->
         <service
             android:name=".VslzrToy"
             android:exported="true">
             <intent-filter>
                 <action android:name="com.nothing.glyph.TOY"/>
             </intent-filter>
-            <meta-data android:name="com.nothing.glyph.toy.name"  android:resource="@string/toy_name"/>
-            <meta-data android:name="com.nothing.glyph.toy.image" android:resource="@drawable/toy_preview"/>
-            <meta-data android:name="com.nothing.glyph.toy.longpress" android:value="1"/>
+            <meta-data
+                android:name="com.nothing.glyph.toy.name"
+                android:resource="@string/toy_name"/>
+            <meta-data
+                android:name="com.nothing.glyph.toy.image"
+                android:resource="@drawable/toy_preview"/>
+            <meta-data
+                android:name="com.nothing.glyph.toy.longpress"
+                android:value="1"/>
         </service>
 
-        <!-- Media session visibility (user must grant access in Settings) -->
+        <!-- Media session bridge (user must enable notification access in Settings).
+             No <uses-permission> needed; keep the service permission here only. -->
         <service
             android:name=".MediaBridge"
-            android:label="vslzr MediaBridge"
+            android:label="@string/app_name"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService"/>

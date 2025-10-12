@@ -4,7 +4,11 @@ import android.app.Service
 import android.content.ComponentName
 import android.content.Intent
 import android.os.*
-import com.nothing.glyph.sdk.*
+import com.nothing.ketchum.Glyph
+import com.nothing.ketchum.GlyphMatrixFrame
+import com.nothing.ketchum.GlyphMatrixManager
+import com.nothing.ketchum.GlyphMatrixObject
+import com.nothing.ketchum.GlyphToy
 
 class VslzrToy : Service() {
     private var gm: GlyphMatrixManager? = null
