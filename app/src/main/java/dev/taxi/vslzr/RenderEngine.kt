@@ -208,9 +208,10 @@ class RenderEngine(
 
 
     private fun drawBattery(pct: Int, y: Int, bright: Int) {
-        val s = if (pct >= 80) "FULL" else "%02d%%".format(pct)
+        val s = if (pct >= 100 || isBatteryFull()) "FULL" else "%02d%%".format(pct)
         font.draw(buf, s, x = centerX(s), y = y, bright = bright)
     }
+
 
     private fun drawBars(mags: IntArray, baseBright: Int) {
         for (i in mags.indices) {
@@ -241,9 +242,24 @@ class RenderEngine(
 
     // ----- utils -----
     private fun readBattery(): Int {
+        // Prefer sticky broadcast with rounding
+        val ifilter = android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED)
+        val i = ctx.registerReceiver(null, ifilter)
+        if (i != null) {
+            val level = i.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1)
+            val scale = i.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100).coerceAtLeast(1)
+            if (level >= 0) return kotlin.math.round(level * 100f / scale).toInt().coerceIn(0, 100)
+        }
+        // Fallback to BatteryManager property (often floored)
         val bm = ctx.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
         return bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY).coerceIn(0, 100)
     }
+    private fun isBatteryFull(): Boolean {
+        val i = ctx.registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+        val status = i?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
+        return status == android.os.BatteryManager.BATTERY_STATUS_FULL
+    }
+
     private fun compressMag(mag: Int): Int {
         val m = mag.coerceAtLeast(0)
         return (255.0 * ln(1.0 + m / 64.0) / ln(1.0 + 255.0 / 64.0)).toInt()
