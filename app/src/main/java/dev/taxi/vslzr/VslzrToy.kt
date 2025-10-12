@@ -4,22 +4,31 @@ import android.app.Service
 import android.content.ComponentName
 import android.content.Intent
 import android.os.*
-import com.nothing.ketchum.Glyph
-import com.nothing.ketchum.GlyphMatrixFrame
 import com.nothing.ketchum.GlyphMatrixManager
-import com.nothing.ketchum.GlyphMatrixObject
 import com.nothing.ketchum.GlyphToy
 
 class VslzrToy : Service() {
     private var gm: GlyphMatrixManager? = null
-    private val messenger = Messenger(handler)
     private var engine: RenderEngine? = null
+
+    // initialize handler BEFORE using it in Messenger
+    private val handler = object : Handler(Looper.getMainLooper()) {
+        override fun handleMessage(msg: Message) {
+            if (msg.what != GlyphToy.MSG_GLYPH_TOY) return
+            when (msg.data.getString(GlyphToy.MSG_GLYPH_TOY_DATA)) {
+                GlyphToy.EVENT_CHANGE -> engine?.toggleBoost()
+                GlyphToy.EVENT_ACTION_DOWN -> {}
+                GlyphToy.EVENT_ACTION_UP -> {}
+            }
+        }
+    }
+    private val messenger = Messenger(handler)
 
     override fun onBind(intent: Intent): IBinder {
         gm = GlyphMatrixManager.getInstance(applicationContext).also { m ->
             m.init(object : GlyphMatrixManager.Callback {
                 override fun onServiceConnected(name: ComponentName) {
-                    m.register(Glyph.DEVICE_23112) // Phone (3)
+                    m.register("23111")
                     startEngine()
                 }
                 override fun onServiceDisconnected(name: ComponentName) {}
@@ -35,19 +44,7 @@ class VslzrToy : Service() {
     }
 
     private fun startEngine() {
-        val push: (IntArray) -> Unit = { frame -> vslzrgm?.setMatrixFrame(frame) }
+        val push: (IntArray) -> Unit = { frame -> gm?.setMatrixFrame(frame) }
         engine = RenderEngine(this, push).apply { start() }
-    }
-
-    // Glyph Button events if you later want to hook long-press or hold
-    private val handler = object : Handler(Looper.getMainLooper()) {
-        override fun handleMessage(msg: Message) {
-            if (msg.what != GlyphToy.MSG_GLYPH_TOY) return
-            when (msg.data.getString(GlyphToy.MSG_GLYPH_TOY_DATA)) {
-                GlyphToy.EVENT_CHANGE -> engine?.toggleBoost() // optional
-                GlyphToy.EVENT_ACTION_DOWN -> {}
-                GlyphToy.EVENT_ACTION_UP -> {}
-            }
-        }
     }
 }

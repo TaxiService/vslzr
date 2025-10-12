@@ -25,56 +25,58 @@ class RenderEngine(
     // 25x25 grayscale buffer
     private val buf = Array(25) { IntArray(25) }
 
-    // Visualizer on output mix (mono FFT)
-    private val vis = Visualizer(0).apply {
-        captureSize = Visualizer.getCaptureSizeRange()[1]
-        scalingMode = Visualizer.SCALING_MODE_NORMALIZED
-        enabled = true
-    }
-
     // Weight curve: brighter at bottom rows
     private val WY = IntArray(25) { y ->
         val t = (24 - y) / 24f
         ( (0.4f + 0.6f * (1f - t*t)) * 255 ).toInt()
     }
 
+    private var vis: Visualizer? = null
+
+    private fun tryInitVis(): Visualizer? = try {
+        Visualizer(0).apply {
+            captureSize = Visualizer.getCaptureSizeRange()[1]
+            scalingMode = Visualizer.SCALING_MODE_NORMALIZED
+            enabled = true
+        }
+    } catch (_: Throwable) { null }
+
     fun start() {
         if (running) return
         running = true
+        vis = tryInitVis()
         scope.launch {
-            val fft = ByteArray(vis.captureSize)
+            val fft = ByteArray(vis?.captureSize ?: 2048)
             var lastBattRead = 0L
             var battPct = readBattery()
             while (running) {
                 val now = SystemClock.elapsedRealtime()
-                if (now - lastBattRead > 1_000L) {
-                    battPct = readBattery(); lastBattRead = now
-                }
+                if (now - lastBattRead > 1_000L) { battPct = readBattery(); lastBattRead = now }
 
                 clearAndDecay()
-
-                // Time and colon blink (0.5s on/off)
-                val t = LocalTime.now()
+                val t = java.time.LocalTime.now()
                 val colonOn = (now / 500L) % 2L == 0L
                 drawHHMM(t.hour, t.minute, colonOn, x = 4, y = 2, bright = BRIGHT_HHMM)
-
-                // Battery bottom: "00%".. "99%" or "FULL"
                 drawBattery(battPct, x = 3, y = 17, bright = BRIGHT_BATT)
 
-                // FFT overlay only if media is playing
-                if (MediaBridge.isPlaying(ctx)) {
-                    vis.getFft(fft) // Android Visualizer FFT API
-                    val mags = compressFft(fft, bars = 12)  // 12 columns
+                if (MediaBridge.isPlaying(ctx) && vis != null) {
+                    vis!!.getFft(fft)
+                    val mags = compressFft(fft, bars = 12)
                     drawBars(mags, baseBright = BRIGHT_VIZ)
                 }
 
                 push(blit())
-                delay(33) // ~30 FPS
+                delay(33)
             }
         }
     }
 
-    fun stop() { running = false; scope.cancel(); vis.release() }
+    fun stop() {
+        running = false
+        scope.cancel()
+        try { vis?.release() } catch (_: Throwable) {}
+        vis = null
+    }
     fun toggleBoost() { BRIGHT_VIZ = if (BRIGHT_VIZ < 200) 220 else 160 } // optional
 
     // --- drawing primitives ---
