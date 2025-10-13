@@ -1,5 +1,54 @@
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
+    <PreferenceCategory android:title="Presets">
+        <Preference
+            android:key="save_preset"
+            android:title="Save preset…"
+            android:summary="Name and store current settings"/>
+        <Preference
+            android:key="load_preset"
+            android:title="Load preset…"
+            android:summary="Apply a saved preset"/>
+        <Preference
+            android:key="copy_preset"
+            android:title="Copy preset JSON"
+            android:summary="Put current settings on the clipboard"/>
+        <Preference
+            android:key="paste_preset"
+            android:title="Paste preset JSON"
+            android:summary="Read JSON from clipboard and apply"/>
+    </PreferenceCategory>
+
+    <!-- High-end recovery + mapping -->
+    <SeekBarPreference
+        android:key="high_cut_khz"
+        android:title="High cut (kHz)"
+        android:max="22" android:min="10" android:defaultValue="18"
+        app:showSeekBarValue="true"/>
+
+    <SeekBarPreference
+        android:key="beta_x100"
+        android:title="Log spacing beta ×100"
+        android:max="300" android:min="120" android:defaultValue="180"
+        app:showSeekBarValue="true"/>
+
+    <SeekBarPreference
+        android:key="resample_tilt_x100"
+        android:title="Resample tilt ×100"
+        android:max="300" android:min="100" android:defaultValue="170"
+        app:showSeekBarValue="true"/>
+
+    <SeekBarPreference
+        android:key="col_tilt_db"
+        android:title="Column high-shelf (dB)"
+        android:max="18" android:min="0" android:defaultValue="9"
+        app:showSeekBarValue="true"/>
+
+    <SeekBarPreference
+        android:key="floor_after_ar"
+        android:title="Post-envelope floor"
+        android:max="32" android:min="0" android:defaultValue="4"
+        app:showSeekBarValue="true"/>
 
     <!-- Live control -->
     <SwitchPreferenceCompat

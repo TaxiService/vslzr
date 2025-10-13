@@ -4,12 +4,20 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
 import androidx.preference.*
+import androidx.appcompat.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.text.InputType
+import android.widget.EditText
+
+
 
 private const val ACTION_APPLY_PREFS = "dev.taxi.vslzr.APPLY_PREFS"
 
 class SettingsActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        supportActionBar?.hide()
         seedDefaultsIfNeeded(this)
         supportFragmentManager.beginTransaction()
             .replace(android.R.id.content, SettingsFragment())
@@ -30,15 +38,19 @@ class SettingsFragment : PreferenceFragmentCompat(),
         findPreference<Preference>("apply_now")?.onPreferenceClickListener = this
 
         val keys = listOf(
+            "save_preset","load_preset","copy_preset","paste_preset",
             "auto_apply","use_circle_map","circle_inset","cols","rows","clock_y","batt_y",
             "hide_clock","hide_batt","erase_clock","erase_batt","full_threshold",
             "bright_hhmm","bright_batt","bright_viz",
             "frame_decay_idle","frame_decay_play",
             "bands","beta_x100","scale_low","scale_high","tilt_db",
             "gate","gain_x100","gamma_x100","attack_x100","release_x100",
-            "high_cut_khz","low_cut_hz","smooth_alpha_x100","floor_after_ar","silence_gate_sum","zero_on_silence"
+            "high_cut_khz","low_cut_hz","smooth_alpha_x100","floor_after_ar","silence_gate_sum","zero_on_silence",
+            "resample_tilt_x100","col_tilt_db"
         )
         keys.forEach { findPreference<Preference>(it)?.onPreferenceChangeListener = this }
+        arrayOf("open_toys_mgr","apply_now","save_preset","load_preset","copy_preset","paste_preset")
+            .forEach { key -> findPreference<Preference>(key)?.onPreferenceClickListener = this }
 
         // numeric summaries
         fun bind(key:String, fmt:(Int)->String) {
@@ -65,6 +77,11 @@ class SettingsFragment : PreferenceFragmentCompat(),
         bind("gamma_x100"){ "gamma: ${"%.2f".format(it/100f)}" }
         bind("attack_x100"){ "attack: ${"%.2f".format(it/100f)}" }
         bind("release_x100"){ "release: ${"%.2f".format(it/100f)}" }
+        bind("high_cut_khz")        { "high cut: $it kHz" }
+        bind("beta_x100")           { "beta: ${"%.2f".format(it/100f)}" }
+        bind("resample_tilt_x100")  { "tilt: ${"%.2f".format(it/100f)}" }
+        bind("col_tilt_db")         { "high shelf: $it dB" }
+        bind("floor_after_ar")      { "post floor: $it" }
 
         // Show formatted summaries under sliders
         fun bindSummaryInt(key: String, fmt: (Int) -> String) {
@@ -81,6 +98,40 @@ class SettingsFragment : PreferenceFragmentCompat(),
         bindSummaryInt("release_x100")    { v -> "release: ${"%.2f".format(v/100f)}" }
         bindSummaryInt("frame_decay_idle"){ v -> "idle decay: $v"}
         bindSummaryInt("frame_decay_play"){ v -> "play decay: $v"}
+
+        attachNumericEditor("bright_viz", 64, 255)
+        attachNumericEditor("bright_hhmm", 64, 255)
+        attachNumericEditor("bright_batt", 64, 255)
+
+        attachNumericEditor("cols", 12, 25)
+        attachNumericEditor("rows", 8, 25)
+        attachNumericEditor("circle_inset", 0, 4)
+        attachNumericEditor("clock_y", 0, 10)
+        attachNumericEditor("batt_y", 12, 24)
+
+        attachNumericEditor("frame_decay_idle", 150, 255)
+        attachNumericEditor("frame_decay_play", 150, 255)
+
+        attachNumericEditor("bands", 6, 32)
+        attachNumericEditor("beta_x100", 120, 300, step = 5)
+        attachNumericEditor("scale_low", 8, 128)
+        attachNumericEditor("scale_high", 8, 128)
+        attachNumericEditor("tilt_db", 0, 18)
+
+        attachNumericEditor("gate", 0, 96)
+        attachNumericEditor("gain_x100", 50, 200)
+        attachNumericEditor("gamma_x100", 30, 200)
+        attachNumericEditor("attack_x100", 10, 100)
+        attachNumericEditor("release_x100", 5, 60)
+
+        attachNumericEditor("high_cut_khz", 10, 22)
+        attachNumericEditor("resample_tilt_x100", 100, 300)
+        attachNumericEditor("col_tilt_db", 0, 18)
+        attachNumericEditor("floor_after_ar", 0, 32)
+
+        attachNumericEditor("smooth_alpha_x100", 10, 90)
+        attachNumericEditor("silence_gate_sum", 0, 500)
+
     }
 
     override fun onPreferenceChange(p: Preference, newValue: Any?): Boolean {
@@ -90,7 +141,7 @@ class SettingsFragment : PreferenceFragmentCompat(),
     }
 
     override fun onPreferenceClick(pref: Preference): Boolean {
-        return when (pref.key) {
+        when (pref.key) {
             "open_toys_mgr" -> {
                 runCatching {
                     startActivity(
@@ -100,13 +151,95 @@ class SettingsFragment : PreferenceFragmentCompat(),
                         )
                     )
                 }
-                true
+                return true
             }
             "apply_now" -> {
-                requireContext().sendBroadcast(Intent(ACTION_APPLY_PREFS))
-                true
+                requireContext().sendBroadcast(Intent(ACTION_APPLY_PREFS)); return true
             }
-            else -> false
+            "save_preset" -> {
+                val input = EditTextPreference(requireContext())
+                val edit = android.widget.EditText(requireContext())
+                edit.hint = "name"
+                AlertDialog.Builder(requireContext())
+                    .setTitle("Save preset")
+                    .setView(edit)
+                    .setPositiveButton("Save") { _, _ ->
+                        val name = edit.text?.toString()?.trim().orEmpty().ifEmpty { "preset" }
+                        val f = PresetManager.save(requireContext(), name)
+                        android.widget.Toast.makeText(requireContext(), "Saved: ${f.name}", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+                return true
+            }
+            "load_preset" -> {
+                val names = PresetManager.list(requireContext())
+                if (names.isEmpty()) {
+                    android.widget.Toast.makeText(requireContext(), "No presets saved", android.widget.Toast.LENGTH_SHORT).show()
+                    return true
+                }
+                AlertDialog.Builder(requireContext())
+                    .setTitle("Load preset")
+                    .setItems(names.toTypedArray()) { _, which ->
+                        val preset = PresetManager.load(requireContext(), names[which])
+                        PresetManager.apply(requireContext(), preset)
+                        requireContext().sendBroadcast(Intent(ACTION_APPLY_PREFS))
+                    }
+                    .show()
+                return true
+            }
+            "copy_preset" -> {
+                val json = PresetManager.snapshot(requireContext(), "clipboard").toString(2)
+                val cm = requireContext().getSystemService(ClipboardManager::class.java)
+                cm.setPrimaryClip(ClipData.newPlainText("vslzr preset", json))
+                android.widget.Toast.makeText(requireContext(), "Copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
+                return true
+            }
+            "paste_preset" -> {
+                val cm = requireContext().getSystemService(ClipboardManager::class.java)
+                val text = cm.primaryClip?.getItemAt(0)?.coerceToText(requireContext())?.toString()
+                if (text.isNullOrBlank()) {
+                    android.widget.Toast.makeText(requireContext(), "Clipboard empty", android.widget.Toast.LENGTH_SHORT).show()
+                    return true
+                }
+                runCatching {
+                    val preset = org.json.JSONObject(text)
+                    PresetManager.apply(requireContext(), preset)
+                    requireContext().sendBroadcast(Intent(ACTION_APPLY_PREFS))
+                    android.widget.Toast.makeText(requireContext(), "Preset applied", android.widget.Toast.LENGTH_SHORT).show()
+                }.onFailure {
+                    android.widget.Toast.makeText(requireContext(), "Invalid JSON", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                return true
+            }
+        }
+        return false
+    }
+    private fun attachNumericEditor(key: String, min: Int, max: Int, step: Int = 1) {
+        val pref = findPreference<SeekBarPreference>(key) ?: return
+        pref.onPreferenceClickListener = Preference.OnPreferenceClickListener {
+            val ctx = requireContext()
+            val input = EditText(ctx).apply {
+                inputType = InputType.TYPE_CLASS_NUMBER
+                setText(pref.value.toString())
+                setSelectAllOnFocus(true)
+            }
+            AlertDialog.Builder(ctx)
+                .setTitle(pref.title ?: key)
+                .setView(input)
+                .setPositiveButton("Apply") { _, _ ->
+                    val v = input.text.toString().toIntOrNull() ?: return@setPositiveButton
+                    val clamped = (v / step) * step
+                    pref.value = clamped.coerceIn(min, max)
+                    // auto-apply if enabled
+                    val auto = preferenceManager.sharedPreferences?.getBoolean("auto_apply", true) ?: true
+                    if (auto) requireContext().sendBroadcast(Intent(ACTION_APPLY_PREFS))
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+            true // consume click (we still keep the on-row SeekBar visible)
         }
     }
+
+
 }

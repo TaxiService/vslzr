@@ -12,7 +12,7 @@ import kotlin.math.min
 import kotlin.math.pow
 
 // layout/mapping (used by your drawers)
-var USE_CIRCLE_MAP = true
+//var USE_CIRCLE_MAP = true
 var CIRCLE_INSET = 0
 var COLS = 23; var ROWS = 23
 var X0 = (25 - COLS)/2; var Y0 = (25 - ROWS)/2; var Y1 = Y0 + ROWS - 1
@@ -20,11 +20,15 @@ var CLOCK_Y = 2; var BATT_Y = 17
 var FULL_THRESHOLD = 80
 // frequency window
 var LOW_CUT_HZ  = 50
-var HIGH_CUT_HZ = 12000  // trim inaudible highs
+var HIGH_CUT_HZ = 18000          // was 12000
+
+var BETA_SPACING = 1.8           // log spacing; higher = more lows
+var RESAMPLE_TILT = 1.7f         // >1 allocates more columns to highs
+var COL_TILT_DB = 9f             // post-resample high shelf
+var FLOOR_AFTER_AR = 4           // lower so tiny highs survive
 
 // smoothing and floor
 var SMOOTH_ALPHA = 0.35f
-var FLOOR_AFTER_AR = 8   // 0..32 -> kill tiny bars
 
 // silence handling
 var SILENCE_GATE_SUM = 40  // sum of colsIn below this = silence
@@ -32,7 +36,7 @@ var ZERO_ON_SILENCE  = true
 
 private var spansInsetCached = Int.MIN_VALUE
 private fun ensureSpans() {
-    if (!USE_CIRCLE_MAP) return
+    //if (!USE_CIRCLE_MAP) return
     if (spansInsetCached != CIRCLE_INSET) {
         buildColumnSpans() // your half-pixel version
         spansInsetCached = CIRCLE_INSET
@@ -108,7 +112,7 @@ class RenderEngine(
     private val push: (IntArray) -> Unit
 ) {
     fun applyPrefs(p: android.content.SharedPreferences) {
-        USE_CIRCLE_MAP = p.getBoolean("use_circle_map", true)
+        //USE_CIRCLE_MAP = p.getBoolean("use_circle_map", true)
         val newCols = p.getInt("cols", COLS)
         ROWS        = p.getInt("rows", ROWS).coerceIn(8,25)
         CIRCLE_INSET= p.getInt("circle_inset", 0)
@@ -129,12 +133,17 @@ class RenderEngine(
         FFT_ERASES_CLOCK        = p.getBoolean("erase_clock", false)
         FFT_ERASES_BATT         = p.getBoolean("erase_batt",  true)
 
-        HIGH_CUT_HZ = p.getInt("high_cut_khz", 12) * 1000
         LOW_CUT_HZ  = p.getInt("low_cut_hz", 50)
         SMOOTH_ALPHA = p.getInt("smooth_alpha_x100", 35) / 100f
-        FLOOR_AFTER_AR = p.getInt("floor_after_ar", 8)
         SILENCE_GATE_SUM = p.getInt("silence_gate_sum", 40)
         ZERO_ON_SILENCE  = p.getBoolean("zero_on_silence", true)
+
+        HIGH_CUT_HZ   = p.getInt("high_cut_khz", 18) * 1000
+        BETA_SPACING  = p.getInt("beta_x100", 180) / 100.0
+        RESAMPLE_TILT = p.getInt("resample_tilt_x100", 170) / 100f
+        COL_TILT_DB   = p.getInt("col_tilt_db", 9).toFloat()
+        FLOOR_AFTER_AR= p.getInt("floor_after_ar", 4)
+
 
 
         val newBands = p.getInt("bands", BANDS)
@@ -213,51 +222,42 @@ class RenderEngine(
                         try {
                             val fft = ByteArray(v.captureSize)
                             v.getFft(fft)
+                            var sr = v.samplingRate; if (sr > 200_000) sr /= 1000; if (sr <= 0) sr = 44100
 
-                            // sample rate (Visualizer may return mHz)
-                            var sr = v.samplingRate
-                            if (sr > 200_000) sr /= 1000
-                            if (sr <= 0) sr = 44100
-
-                            // 1) bands in [LOW_CUT_HZ .. HIGH_CUT_HZ]
                             val bands  = fftToBandsLogWindowed(
                                 fft, bands = BANDS, sampleRateHz = sr,
-                                lowHz = LOW_CUT_HZ, highHz = HIGH_CUT_HZ,
-                                beta = 2.0, scaleLow = 64.0, scaleHigh = 20.0
+                                lowHz = LOW_CUT_HZ.coerceAtLeast(20),
+                                highHz = HIGH_CUT_HZ.coerceAtMost(sr / 2),
+                                beta = BETA_SPACING, scaleLow = SCALE_LOW, scaleHigh = SCALE_HIGH
                             )
-
-                            // 2) pre-EMA
                             val smooth = smoothBarsWithAlpha(bands, alpha = SMOOTH_ALPHA)
+                            val colsIn = resampleToColsTilt(smooth, cols = COLS, tilt = RESAMPLE_TILT)
 
-                            // 3) resample -> COLS
-                            val colsIn = resampleToCols(smooth, cols = COLS)
+// high-shelf across columns (0 dB → +COL_TILT_DB at rightmost)
+                            val colsShelved = IntArray(COLS) { i ->
+                                val t = i.toFloat() / (COLS - 1).coerceAtLeast(1)
+                                val g = 10.0.pow((COL_TILT_DB * t) / 20.0).toFloat()
+                                (colsIn[i] * g).toInt().coerceIn(0, 255)
+                            }
 
-                            // silence probe
-                            val energySum = colsIn.sum()
-
-                            // 4) gate + gamma + AR envelope
+// gate + gamma + AR
                             val colsOut = IntArray(COLS)
+                            val sumIn = colsShelved.sum()
                             for (i in 0 until COLS) {
-                                var v255 = (colsIn[i] * GAIN).toInt().coerceIn(0, 255)
+                                var v255 = (colsShelved[i] * GAIN).toInt().coerceIn(0, 255)
                                 v255 = (v255 - GATE).coerceAtLeast(0)
                                 val n = (v255 / 255f).toDouble().pow(GAMMA.toDouble()).toFloat()
                                 val target = (255f * n).toInt()
-
                                 val a = if (target > env[i].toInt()) ATTACK else RELEASE
                                 env[i] += a * (target - env[i])
-
                                 var out = env[i].toInt().coerceIn(0, 255)
-                                if (out < FLOOR_AFTER_AR) out = 0         // kill 1-pixel floor
+                                if (out < FLOOR_AFTER_AR) out = 0
                                 colsOut[i] = out
                             }
-
-                            // 5) silence zeroing (optional)
-                            if (ZERO_ON_SILENCE && energySum < SILENCE_GATE_SUM) {
+                            if (ZERO_ON_SILENCE && sumIn < SILENCE_GATE_SUM) {
                                 java.util.Arrays.fill(colsOut, 0)
-                                for (i in 0 until COLS) env[i] *= 0.85f   // fast decay to black
+                                for (i in 0 until COLS) env[i] *= 0.85f
                             }
-
-
                             drawColumnsMapped(colsOut, BRIGHT_VIZ, FFT_ERASES_BATT, FFT_ERASES_CLOCK)
 
                         } catch (_: Throwable) {}
@@ -586,14 +586,16 @@ class RenderEngine(
         }
         return out
     }
-    private fun resampleToCols(bands: IntArray, cols: Int = 25): IntArray {
+    private fun resampleToColsTilt(bands: IntArray, cols: Int, tilt: Float): IntArray {
         val out = IntArray(cols)
         val maxIdx = bands.lastIndex
         for (x in 0 until cols) {
-            val t = x * maxIdx.toFloat() / (cols - 1).toFloat()
-            val i0 = t.toInt().coerceIn(0, maxIdx)
+            val t  = x.toFloat() / (cols - 1).coerceAtLeast(1)
+            val u  = t.pow(tilt)                   // tilt>1 → more columns to highs
+            val pos = u * maxIdx
+            val i0 = pos.toInt().coerceIn(0, maxIdx)
             val i1 = (i0 + 1).coerceAtMost(maxIdx)
-            val f = t - i0
+            val f  = pos - i0
             out[x] = ((1f - f) * bands[i0] + f * bands[i1]).toInt().coerceIn(0, 255)
         }
         return out

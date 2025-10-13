@@ -5,57 +5,53 @@ import org.xmlpull.v1.XmlPullParser
 
 private const val PREFS_NAME = "vslzr_prefs"
 private const val SEED_VERSION_KEY = "__seed_version__"
-// Increment when you change res/xml/prefs_seed.xml
-private const val SEED_VERSION = 2
 
-/**
- * Copies values from res/xml/prefs_seed.xml into SharedPreferences "vslzr_prefs"
- * the first time (or when SEED_VERSION increases).
- */
+/** Hash the current res/xml/prefs_seed.xml so reseed triggers only when content changes. */
+private fun seedVersionFromResource(ctx: Context): Int {
+    val xpp = ctx.resources.getXml(R.xml.prefs_seed)
+    var h = 1
+    var e = xpp.eventType
+    while (e != XmlPullParser.END_DOCUMENT) {
+        if (e == XmlPullParser.START_TAG) {
+            h = 31 * h + xpp.name.hashCode()
+            h = 31 * h + (xpp.getAttributeValue(null, "name")?.hashCode() ?: 0)
+            h = 31 * h + (xpp.getAttributeValue(null, "value")?.hashCode() ?: 0)
+        }
+        e = xpp.next()
+    }
+    return h
+}
+
+/** Copy values from res/xml/prefs_seed.xml into SharedPreferences if the seed changed. */
 fun seedDefaultsIfNeeded(ctx: Context) {
     val sp = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    val current = sp.getInt(SEED_VERSION_KEY, 0)
-    if (current >= SEED_VERSION) return
+    val seedVersion = seedVersionFromResource(ctx)
+    val current = sp.getInt(SEED_VERSION_KEY, Int.MIN_VALUE)
+    if (current == seedVersion) return
 
     val editor = sp.edit()
     val xpp = ctx.resources.getXml(R.xml.prefs_seed)
-
-    var event = xpp.eventType
-    while (event != XmlPullParser.END_DOCUMENT) {
-        if (event == XmlPullParser.START_TAG) {
+    var e = xpp.eventType
+    while (e != XmlPullParser.END_DOCUMENT) {
+        if (e == XmlPullParser.START_TAG) {
             val tag = xpp.name
             val name = xpp.getAttributeValue(null, "name") ?: ""
-
             if (name.isNotEmpty()) {
                 when (tag) {
-                    "boolean" -> {
-                        val v = xpp.getAttributeBooleanValue(null, "value", false)
-                        editor.putBoolean(name, v)
-                    }
-                    "int" -> {
-                        val v = xpp.getAttributeIntValue(null, "value", 0)
-                        editor.putInt(name, v)
-                    }
-                    "float" -> {
-                        val raw = xpp.getAttributeValue(null, "value")
-                        val v = raw?.toFloatOrNull() ?: 0f
-                        editor.putFloat(name, v)
-                    }
-                    "string" -> {
-                        val v = xpp.nextText()
-                        editor.putString(name, v)
-                    }
+                    "boolean" -> editor.putBoolean(name, xpp.getAttributeBooleanValue(null, "value", false))
+                    "int"     -> editor.putInt(name,     xpp.getAttributeIntValue(null, "value", 0))
+                    "float"   -> editor.putFloat(name,   xpp.getAttributeValue(null, "value")?.toFloatOrNull() ?: 0f)
+                    "string"  -> editor.putString(name,  xpp.nextText())
                 }
             }
         }
-        event = xpp.next()
+        e = xpp.next()
     }
-
-    editor.putInt(SEED_VERSION_KEY, SEED_VERSION).apply()
+    editor.putInt(SEED_VERSION_KEY, seedVersion).apply()
 }
 
-/** Optional helper if you need to force reseed during development. */
+/** Dev helper to force reseed once. */
 fun forceReseed(ctx: Context) {
     ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        .edit().putInt(SEED_VERSION_KEY, 0).apply()
+        .edit().remove(SEED_VERSION_KEY).apply()
 }

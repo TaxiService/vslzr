@@ -4,7 +4,7 @@
     <int name="high_cut_khz" value="1" />
     <int name="bar_bottom_y" value="24" />
     <int name="attack_x100" value="86" />
-    <boolean name="hide_batt" value="true" />
+    <boolean name="hide_batt" value="false" />
     <int name="silence_gate_sum" value="0" />
     <int name="gain_x100" value="161" />
     <int name="frame_decay_idle" value="50" />
@@ -18,17 +18,20 @@
     <boolean name="use_circle_map" value="true" />
     <int name="scale_high" value="40" />
     <int name="cols" value="25" />
+    <int name="col_tilt_db" value="6" />
     <int name="low_cut_hz" value="1" />
     <boolean name="zero_on_silence" value="false" />
     <boolean name="hide_clock" value="false" />
+    <int name="__seed_version__" value="-2045436522" />
     <int name="tilt_db" value="0" />
     <int name="release_x100" value="60" />
     <int name="bright_batt" value="200" />
     <int name="full_threshold" value="80" />
-    <int name="rows" value="25" />
+    <int name="rows" value="7" />
     <int name="frame_decay_play" value="32" />
     <boolean name="erase_clock" value="false" />
-    <int name="batt_y" value="15" />
+    <int name="resample_tilt_x100" value="99" />
+    <int name="batt_y" value="17" />
     <int name="bar_max_h" value="23" />
     <int name="floor_after_ar" value="0" />
     <int name="bright_viz" value="124" />
