@@ -11,16 +11,16 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
 
-private val BANDS = 12
+private val BANDS = 23
 private val ema   = FloatArray(BANDS)     // pre-smoother (kept)
 private val env   = FloatArray(25)        // post-resample envelope (AR smooth)
-var NOISE_GATE = 5                        // 0..255; raise to kill more hiss
-var GAMMA      = 1f                      // >1 suppress small values
-var ATTACK     = 0.7f                     // faster rise
-var RELEASE    = 0.15f                     // faster fall → less linger
+var NOISE_GATE = 0                        // 0..255; raise to kill more hiss
+var GAMMA      = 1.1f                      // >1 suppress small values
+var ATTACK     = 1.0f                     // faster rise
+var RELEASE    = 1.82f                     // faster fall → less linger
 
-var BAR_BOTTOM_Y = 16 // was 24; smaller = higher on screen
-var BAR_MAX_H    = 15  // rows tall (keep under ~12 to spare the clock)
+var BAR_BOTTOM_Y = 20 // was 24; smaller = higher on screen
+var BAR_MAX_H    = 20  // rows tall (keep under ~12 to spare the clock)
 class RenderEngine(
     private val ctx: Context,
     private val push: (IntArray) -> Unit
@@ -28,7 +28,7 @@ class RenderEngine(
     // Brightness knobs (0..255)16
     var BRIGHT_HHMM = 255
     var BRIGHT_BATT = 120
-    var BRIGHT_VIZ  = 200
+    var BRIGHT_VIZ  = 255
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var running = false
@@ -116,7 +116,7 @@ class RenderEngine(
                 }
 
                 push(blit())
-                delay(32)
+                delay(33)
             }
         }
     }
