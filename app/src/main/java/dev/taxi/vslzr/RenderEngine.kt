@@ -12,7 +12,13 @@ import kotlin.math.min
 import kotlin.math.pow
 
 private val BANDS = 12
-private val ema = FloatArray(BANDS)
+private val ema   = FloatArray(BANDS)     // pre-smoother (kept)
+private val env   = FloatArray(25)        // post-resample envelope (AR smooth)
+var NOISE_GATE = 5                        // 0..255; raise to kill more hiss
+var GAMMA      = 1f                      // >1 suppress small values
+var ATTACK     = 0.7f                     // faster rise
+var RELEASE    = 0.15f                     // faster fall → less linger
+
 var BAR_BOTTOM_Y = 16 // was 24; smaller = higher on screen
 var BAR_MAX_H    = 15  // rows tall (keep under ~12 to spare the clock)
 class RenderEngine(
@@ -22,7 +28,7 @@ class RenderEngine(
     // Brightness knobs (0..255)16
     var BRIGHT_HHMM = 255
     var BRIGHT_BATT = 120
-    var BRIGHT_VIZ  = 100
+    var BRIGHT_VIZ  = 200
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var running = false
@@ -67,7 +73,7 @@ class RenderEngine(
                 val now = SystemClock.elapsedRealtime()
                 if (now - lastBattRead > 1_000L) { battPct = readBattery(); lastBattRead = now }
 
-                clearAndDecay(220) // ~0.86 decay
+                clearAndDecay(if (MediaBridge.isPlaying(ctx)) 180 else 220)  // 180 ≈ faster fade
 
                 // time (blink colon 1 Hz, 0.5 s duty)
                 val t = LocalTime.now()
@@ -83,17 +89,34 @@ class RenderEngine(
                         try {
                             val fft = ByteArray(v.captureSize)
                             v.getFft(fft)
+
+                            // 1) 12 log bands → light EMA
                             val bands  = fftToBandsLog(fft, BANDS, beta = 2.0, scaleLow = 64.0, scaleHigh = 20.0)
-                            val tilted = tiltBands(bands, tiltDb = 12f)                 // boost highs
-                            val smooth = smoothBars(tilted, alpha = 0.5f)             // EMA
-                            val cols   = resampleToCols(smooth, cols = 25)
-                            val gamma  = applyGamma(cols, gamma = 0.8f)               // emphasize small signals
-                            drawColumns(gamma, baseBright = BRIGHT_VIZ)
+                            val smooth = smoothBars(bands, alpha = 0.35f)
+
+                            // 2) resample to 25 columns
+                            val cols = resampleToCols(smooth, cols = 25)
+
+                            // 3) gate + gamma + attack/release
+                            val ar = IntArray(25)
+                            for (i in 0 until 25) {
+                                val gated = (cols[i] - NOISE_GATE).coerceAtLeast(0)
+                                val n     = (gated / 255f).toDouble().pow(GAMMA.toDouble()).toFloat()
+                                val target = (255f * n).toInt()
+
+                                val a = if (target > env[i]) ATTACK else RELEASE
+                                env[i] += a * (target - env[i])
+                                ar[i] = env[i].toInt().coerceIn(0, 255)
+                            }
+
+                            // 4) draw
+                            drawColumns(ar, baseBright = BRIGHT_VIZ)
                         } catch (_: Throwable) {}
                     }
                 }
+
                 push(blit())
-                delay(33) // ~30 FPS
+                delay(32)
             }
         }
     }
