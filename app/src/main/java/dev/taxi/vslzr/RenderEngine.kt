@@ -9,15 +9,20 @@ import java.time.LocalTime
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
 
+private val BANDS = 12
+private val ema = FloatArray(BANDS)
+var BAR_BOTTOM_Y = 16 // was 24; smaller = higher on screen
+var BAR_MAX_H    = 15  // rows tall (keep under ~12 to spare the clock)
 class RenderEngine(
     private val ctx: Context,
     private val push: (IntArray) -> Unit
 ) {
-    // Brightness knobs (0..255)
+    // Brightness knobs (0..255)16
     var BRIGHT_HHMM = 255
-    var BRIGHT_BATT = 100
-    var BRIGHT_VIZ  = 180
+    var BRIGHT_BATT = 120
+    var BRIGHT_VIZ  = 100
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var running = false
@@ -75,12 +80,18 @@ class RenderEngine(
                 // FFT overlay if playing and visualizer ready
                 vis?.let { v ->
                     if (MediaBridge.isPlaying(ctx)) {
-                        v.getFft(fft)
-                        val mags = compressFft(fft, bars = 12)
-                        drawBars(mags, baseBright = BRIGHT_VIZ)
+                        try {
+                            val fft = ByteArray(v.captureSize)
+                            v.getFft(fft)
+                            val bands  = fftToBandsLog(fft, BANDS, beta = 2.0, scaleLow = 64.0, scaleHigh = 20.0)
+                            val tilted = tiltBands(bands, tiltDb = 12f)                 // boost highs
+                            val smooth = smoothBars(tilted, alpha = 0.5f)             // EMA
+                            val cols   = resampleToCols(smooth, cols = 25)
+                            val gamma  = applyGamma(cols, gamma = 0.8f)               // emphasize small signals
+                            drawColumns(gamma, baseBright = BRIGHT_VIZ)
+                        } catch (_: Throwable) {}
                     }
                 }
-
                 push(blit())
                 delay(33) // ~30 FPS
             }
@@ -214,16 +225,27 @@ class RenderEngine(
 
 
     private fun drawBars(mags: IntArray, baseBright: Int) {
-        for (i in mags.indices) {
-            val h = min(12, mags[i] / 10) // 0..12 rows
-            val b = quantize(compressMag(mags[i]), steps = 16).coerceAtLeast(24)
-            val x = 1 + i * 2
-            for (yy in 24 downTo 24 - h) {
-                val v = (b * baseBright / 255) * WY[yy] / 255
-                setMax(buf, x, yy, v)
+        for (x in 0 until 25) {
+            val h = (mags[x] * BAR_MAX_H / 255).coerceIn(0, BAR_MAX_H)
+            val b = quantize(compressMag(mags[x]), 16).coerceAtLeast(24)
+            val yBottom = BAR_BOTTOM_Y.coerceIn(0, 24)
+            val yTop = (yBottom - h).coerceAtLeast(0)
+            for (yy in yBottom downTo yTop) {
+                val w = weightAt(yy, yBottom)                 // brighter near bar bottom
+                val v = (b * baseBright / 255) * w / 255
+                buf[yy][x] = max(buf[yy][x], v)
             }
         }
     }
+    private fun weightAt(y: Int, bottom: Int): Int {
+        // 1.0 at bottom, ~0.35 near the top of the bar span
+        val dist = (bottom - y).coerceAtLeast(0)
+        val span = max(1, bottom) // normalize by screen coords
+        val t = dist.toFloat() / span
+        val w = 0.40f + 0.60f * (1f - t * t)
+        return (w * 255f).toInt()
+    }
+
 
     // ----- buffer ops -----
     private fun clearAndDecay(numer: Int) {
@@ -257,7 +279,7 @@ class RenderEngine(
     private fun isBatteryFull(): Boolean {
         val i = ctx.registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
         val status = i?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
-        return status == android.os.BatteryManager.BATTERY_STATUS_FULL
+        return status == BatteryManager.BATTERY_STATUS_FULL
     }
 
     private fun compressMag(mag: Int): Int {
@@ -287,4 +309,92 @@ class RenderEngine(
         }
         return mags
     }
+    private fun smoothBars(raw: IntArray, alpha: Float): IntArray {
+        val out = IntArray(raw.size)
+        for (i in raw.indices) {
+            ema[i] = ema[i] * (1f - alpha) + raw[i] * alpha
+            out[i] = ema[i].toInt().coerceIn(0, 255)
+        }
+        return out
+    }
+    private fun fftToBandsLog(
+        fft: ByteArray,
+        bands: Int,
+        beta: Double = 2.0,
+        scaleLow: Double = 64.0,
+        scaleHigh: Double = 64.0
+    ): IntArray {
+        val n = fft.size / 2
+        val maxBin = (n - 1).coerceAtLeast(2)
+        val edges = IntArray(bands + 1)
+        edges[0] = 1 // skip DC
+        for (i in 1..bands) {
+            val t = i.toDouble() / bands
+            val e = Math.exp(Math.log(maxBin.toDouble()) * Math.pow(t, beta)).toInt()
+            edges[i] = e.coerceAtLeast(edges[i - 1] + 1).coerceAtMost(maxBin)
+        }
+        val out = IntArray(bands)
+        for (i in 0 until bands) {
+            val start = edges[i]
+            val end   = edges[i + 1]
+            var acc = 0.0; var cnt = 0
+            var k = start
+            while (k < end && k * 2 + 1 < fft.size) {
+                val re = fft[k * 2].toInt()
+                val im = fft[k * 2 + 1].toInt()
+                acc += kotlin.math.hypot(re.toDouble(), im.toDouble())
+                cnt++; k++
+            }
+            val avg = if (cnt == 0) 0.0 else acc / cnt
+            // per-band knee: smaller scale at higher bands → more boost up high
+            val t = i.toDouble() / (bands - 1).coerceAtLeast(1)
+            val scale = scaleLow + (scaleHigh - scaleLow) * t
+            val comp = (255.0 * ln(1.0 + avg / scale) / ln(1.0 + 255.0 / scale)).toInt()
+            out[i] = comp.coerceIn(0, 255)
+        }
+        return out
+    }
+    private fun resampleToCols(bands: IntArray, cols: Int = 25): IntArray {
+        val out = IntArray(cols)
+        val maxIdx = bands.lastIndex
+        for (x in 0 until cols) {
+            val t = x * maxIdx.toFloat() / (cols - 1).toFloat()
+            val i0 = t.toInt().coerceIn(0, maxIdx)
+            val i1 = (i0 + 1).coerceAtMost(maxIdx)
+            val f = t - i0
+            out[x] = ((1f - f) * bands[i0] + f * bands[i1]).toInt().coerceIn(0, 255)
+        }
+        return out
+    }
+    private fun drawColumns(cols: IntArray, baseBright: Int) {
+        val yBottom = BAR_BOTTOM_Y.coerceIn(0, 24)
+        for (x in 0 until 25) {
+            val h = (cols[x] * BAR_MAX_H / 255).coerceIn(0, BAR_MAX_H)
+            val b = quantize(compressMag(cols[x]), steps = 16).coerceAtLeast(24)
+            val yTop = (yBottom - h).coerceAtLeast(0)
+            for (yy in yBottom downTo yTop) {
+                val v = (b * baseBright / 255) * weightAt(yy, yBottom) / 255
+                buf[yy][x] = max(buf[yy][x], v)
+            }
+        }
+    }
+    private fun tiltBands(bands: IntArray, tiltDb: Float): IntArray {
+        val n = bands.size
+        val out = IntArray(n)
+        for (i in 0 until n) {
+            val t = i.toFloat() / (n - 1).coerceAtLeast(1)
+            val gain = 10.0.pow((tiltDb * t) / 20.0).toFloat()
+            out[i] = (bands[i] * gain).toInt().coerceIn(0, 255)
+        }
+        return out
+    }
+    private fun applyGamma(cols: IntArray, gamma: Float): IntArray {
+        val out = IntArray(cols.size)
+        for (i in cols.indices) {
+            val n = (cols[i].coerceIn(0, 255)) / 255f
+            out[i] = (255f * n.pow(gamma)).toInt()
+        }
+        return out
+    }
+
 }
