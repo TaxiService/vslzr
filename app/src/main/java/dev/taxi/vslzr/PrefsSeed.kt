@@ -1,33 +1,61 @@
 package dev.taxi.vslzr
 
 import android.content.Context
-import android.content.SharedPreferences
 import org.xmlpull.v1.XmlPullParser
 
 private const val PREFS_NAME = "vslzr_prefs"
-private const val SEED_FLAG = "__seed_applied__"
+private const val SEED_VERSION_KEY = "__seed_version__"
+// Increment when you change res/xml/prefs_seed.xml
+private const val SEED_VERSION = 2
 
+/**
+ * Copies values from res/xml/prefs_seed.xml into SharedPreferences "vslzr_prefs"
+ * the first time (or when SEED_VERSION increases).
+ */
 fun seedDefaultsIfNeeded(ctx: Context) {
     val sp = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    if (sp.getBoolean(SEED_FLAG, false)) return
+    val current = sp.getInt(SEED_VERSION_KEY, 0)
+    if (current >= SEED_VERSION) return
 
     val editor = sp.edit()
     val xpp = ctx.resources.getXml(R.xml.prefs_seed)
-    while (true) {
-        when (xpp.eventType) {
-            XmlPullParser.START_TAG -> {
-                val tag = xpp.name
-                val name = xpp.getAttributeValue(null, "name") ?: ""
+
+    var event = xpp.eventType
+    while (event != XmlPullParser.END_DOCUMENT) {
+        if (event == XmlPullParser.START_TAG) {
+            val tag = xpp.name
+            val name = xpp.getAttributeValue(null, "name") ?: ""
+
+            if (name.isNotEmpty()) {
                 when (tag) {
-                    "boolean" -> editor.putBoolean(name, xpp.getAttributeBooleanValue(null, "value", false))
-                    "int"     -> editor.putInt(name,     xpp.getAttributeIntValue(null, "value", 0))
-                    "float"   -> editor.putFloat(name,   xpp.getAttributeValue(null, "value")?.toFloatOrNull() ?: 0f)
-                    "string"  -> editor.putString(name,  xpp.nextText())
+                    "boolean" -> {
+                        val v = xpp.getAttributeBooleanValue(null, "value", false)
+                        editor.putBoolean(name, v)
+                    }
+                    "int" -> {
+                        val v = xpp.getAttributeIntValue(null, "value", 0)
+                        editor.putInt(name, v)
+                    }
+                    "float" -> {
+                        val raw = xpp.getAttributeValue(null, "value")
+                        val v = raw?.toFloatOrNull() ?: 0f
+                        editor.putFloat(name, v)
+                    }
+                    "string" -> {
+                        val v = xpp.nextText()
+                        editor.putString(name, v)
+                    }
                 }
             }
-            XmlPullParser.END_DOCUMENT -> break
         }
-        xpp.next()
+        event = xpp.next()
     }
-    editor.putBoolean(SEED_FLAG, true).apply()
+
+    editor.putInt(SEED_VERSION_KEY, SEED_VERSION).apply()
+}
+
+/** Optional helper if you need to force reseed during development. */
+fun forceReseed(ctx: Context) {
+    ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .edit().putInt(SEED_VERSION_KEY, 0).apply()
 }

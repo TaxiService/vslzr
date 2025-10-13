@@ -31,11 +31,12 @@ class SettingsFragment : PreferenceFragmentCompat(),
 
         val keys = listOf(
             "auto_apply","use_circle_map","circle_inset","cols","rows","clock_y","batt_y",
-            "hide_batt","erase_batt","full_threshold",
+            "hide_clock","hide_batt","erase_clock","erase_batt","full_threshold",
             "bright_hhmm","bright_batt","bright_viz",
             "frame_decay_idle","frame_decay_play",
             "bands","beta_x100","scale_low","scale_high","tilt_db",
-            "gate","gain_x100","gamma_x100","attack_x100","release_x100"
+            "gate","gain_x100","gamma_x100","attack_x100","release_x100",
+            "high_cut_khz","low_cut_hz","smooth_alpha_x100","floor_after_ar","silence_gate_sum","zero_on_silence"
         )
         keys.forEach { findPreference<Preference>(it)?.onPreferenceChangeListener = this }
 

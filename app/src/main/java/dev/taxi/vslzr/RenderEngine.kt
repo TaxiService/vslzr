@@ -18,6 +18,17 @@ var COLS = 23; var ROWS = 23
 var X0 = (25 - COLS)/2; var Y0 = (25 - ROWS)/2; var Y1 = Y0 + ROWS - 1
 var CLOCK_Y = 2; var BATT_Y = 17
 var FULL_THRESHOLD = 80
+// frequency window
+var LOW_CUT_HZ  = 50
+var HIGH_CUT_HZ = 12000  // trim inaudible highs
+
+// smoothing and floor
+var SMOOTH_ALPHA = 0.35f
+var FLOOR_AFTER_AR = 8   // 0..32 -> kill tiny bars
+
+// silence handling
+var SILENCE_GATE_SUM = 40  // sum of colsIn below this = silence
+var ZERO_ON_SILENCE  = true
 
 private var spansInsetCached = Int.MIN_VALUE
 private fun ensureSpans() {
@@ -66,12 +77,20 @@ private fun buildColumnSpans() {
 }
 
 // behavior toggles
-var FFT_ERASES_BATT        = true    // FFT turns off battery pixels on overlap
-var BATT_HIDE_WHEN_PLAYING = false   // hide battery while music plays
+var CLOCK_HIDE_WHEN_PLAYING = false
+var BATT_HIDE_WHEN_PLAYING  = false
+var FFT_ERASES_CLOCK        = false
+var FFT_ERASES_BATT         = true
 
 // battery mask for overlap logic
-private val battMask = Array(25) { BooleanArray(25) }
-
+private val clockMask = Array(25) { BooleanArray(25) }
+private val battMask  = Array(25) { BooleanArray(25) }
+private fun clearMasks() {
+    for (y in 0 until 25) {
+        java.util.Arrays.fill(clockMask[y], false)
+        java.util.Arrays.fill(battMask[y],  false)
+    }
+}
 // tuning
 var BRIGHT_HHMM = 255; var BRIGHT_BATT = 200; var BRIGHT_VIZ = 180
 var FRAME_DECAY_IDLE = 220; var FRAME_DECAY_PLAY = 190
@@ -104,6 +123,19 @@ class RenderEngine(
 
         FRAME_DECAY_IDLE = p.getInt("frame_decay_idle", FRAME_DECAY_IDLE)
         FRAME_DECAY_PLAY = p.getInt("frame_decay_play", FRAME_DECAY_PLAY)
+
+        CLOCK_HIDE_WHEN_PLAYING = p.getBoolean("hide_clock", false)
+        BATT_HIDE_WHEN_PLAYING  = p.getBoolean("hide_batt",  false)
+        FFT_ERASES_CLOCK        = p.getBoolean("erase_clock", false)
+        FFT_ERASES_BATT         = p.getBoolean("erase_batt",  true)
+
+        HIGH_CUT_HZ = p.getInt("high_cut_khz", 12) * 1000
+        LOW_CUT_HZ  = p.getInt("low_cut_hz", 50)
+        SMOOTH_ALPHA = p.getInt("smooth_alpha_x100", 35) / 100f
+        FLOOR_AFTER_AR = p.getInt("floor_after_ar", 8)
+        SILENCE_GATE_SUM = p.getInt("silence_gate_sum", 40)
+        ZERO_ON_SILENCE  = p.getBoolean("zero_on_silence", true)
+
 
         val newBands = p.getInt("bands", BANDS)
         EMA_ALPHA    = p.getInt("beta_x100", 200) / 100f  // if you used this for spacing, keep separate; else remove
@@ -162,13 +194,16 @@ class RenderEngine(
                 if (now - lastBattRead > 1_000L) { battPct = readBattery(); lastBattRead = now }
                 val playing = MediaBridge.isPlaying(ctx)
                 clearAndDecay(if (playing) FRAME_DECAY_PLAY else FRAME_DECAY_IDLE)
-                clearBattMask()
+                clearMasks()
 
                 // time (blink colon 1 Hz, 0.5 s duty)
                 val t = LocalTime.now()
                 val colonOn = (now / 500L) % 2L == 0L
-                drawHHMM(t.hour, t.minute, colonOn, y = CLOCK_Y, bright = BRIGHT_HHMM)
-                if (!BATT_HIDE_WHEN_PLAYING || !playing) {
+                if (!(CLOCK_HIDE_WHEN_PLAYING && playing)) {
+                    val nowColon = (now / 500L) % 2L == 0L
+                    drawHHMM(t.hour, t.minute, nowColon, y = CLOCK_Y, bright = BRIGHT_HHMM, markMask = true)
+                }
+                if (!(BATT_HIDE_WHEN_PLAYING && playing)) {
                     drawBattery(readBattery(), y = BATT_Y, bright = BRIGHT_BATT, markMask = true)
                 }
 
@@ -179,28 +214,52 @@ class RenderEngine(
                             val fft = ByteArray(v.captureSize)
                             v.getFft(fft)
 
-                            val bands  = fftToBandsLog(fft, BANDS, beta = 2.0, scaleLow = 64.0, scaleHigh = 20.0)
-                            val smooth = smoothBars(bands, alpha = 0.35f)                  // pre EMA
-                            val colsIn = resampleToCols(smooth, cols = COLS)               // -> 23
+                            // sample rate (Visualizer may return mHz)
+                            var sr = v.samplingRate
+                            if (sr > 200_000) sr /= 1000
+                            if (sr <= 0) sr = 44100
 
-                            // per-column processing
+                            // 1) bands in [LOW_CUT_HZ .. HIGH_CUT_HZ]
+                            val bands  = fftToBandsLogWindowed(
+                                fft, bands = BANDS, sampleRateHz = sr,
+                                lowHz = LOW_CUT_HZ, highHz = HIGH_CUT_HZ,
+                                beta = 2.0, scaleLow = 64.0, scaleHigh = 20.0
+                            )
+
+                            // 2) pre-EMA
+                            val smooth = smoothBarsWithAlpha(bands, alpha = SMOOTH_ALPHA)
+
+                            // 3) resample -> COLS
+                            val colsIn = resampleToCols(smooth, cols = COLS)
+
+                            // silence probe
+                            val energySum = colsIn.sum()
+
+                            // 4) gate + gamma + AR envelope
                             val colsOut = IntArray(COLS)
                             for (i in 0 until COLS) {
-                                // gate and gain
                                 var v255 = (colsIn[i] * GAIN).toInt().coerceIn(0, 255)
                                 v255 = (v255 - GATE).coerceAtLeast(0)
-
-                                // gamma map
                                 val n = (v255 / 255f).toDouble().pow(GAMMA.toDouble()).toFloat()
                                 val target = (255f * n).toInt()
 
-                                // attack-release envelope
                                 val a = if (target > env[i].toInt()) ATTACK else RELEASE
                                 env[i] += a * (target - env[i])
-                                colsOut[i] = env[i].toInt().coerceIn(0, 255)
+
+                                var out = env[i].toInt().coerceIn(0, 255)
+                                if (out < FLOOR_AFTER_AR) out = 0         // kill 1-pixel floor
+                                colsOut[i] = out
                             }
 
-                            drawColumnsMapped(colsOut, baseBright = BRIGHT_VIZ, eraseBatt = FFT_ERASES_BATT)
+                            // 5) silence zeroing (optional)
+                            if (ZERO_ON_SILENCE && energySum < SILENCE_GATE_SUM) {
+                                java.util.Arrays.fill(colsOut, 0)
+                                for (i in 0 until COLS) env[i] *= 0.85f   // fast decay to black
+                            }
+
+
+                            drawColumnsMapped(colsOut, BRIGHT_VIZ, FFT_ERASES_BATT, FFT_ERASES_CLOCK)
+
                         } catch (_: Throwable) {}
                     }
                 }
@@ -227,7 +286,8 @@ class RenderEngine(
 
     // Simple 1-bit bitmap font with variable widths
     class BitmapFont(val height: Int, var spacing: Int = 1) {
-
+        fun isOn(ch: Char, r: Int, c: Int): Boolean =
+            glyphs[ch]?.getOrNull(r)?.getOrNull(c) == true
         private val glyphs = mutableMapOf<Char, Array<BooleanArray>>() // [row][col]
         fun drawChar(buf: Array<IntArray>, ch: Char, x: Int, y: Int, bright: Int) {
             val g = glyphs[ch] ?: return
@@ -309,50 +369,51 @@ class RenderEngine(
 
     private fun centerX(text: String) = ((25 - font.measure(text)).coerceAtLeast(0)) / 2
 
-    private fun drawHHMM(h: Int, m: Int, colonOn: Boolean, y: Int, bright: Int) {
-        val template = "00:00"                 // constant width = 17 px with your font
+    private fun drawHHMM(h: Int, m: Int, colonOn: Boolean, y: Int, bright: Int, markMask: Boolean) {
+        val template = "00:00"
         var cx = centerX(template)
 
-        // hours
-        font.drawChar(buf, ('0'.code + h/10).toChar(), cx, y, bright)
-        cx += font.width('0') + font.spacing
-        font.drawChar(buf, ('0'.code + h%10).toChar(), cx, y, bright)
-        cx += font.width('0') + font.spacing
+        fun put(ch: Char) {
+            font.draw(buf, ch.toString(), cx, y, bright)
+            if (markMask) {
+                val w = font.width(ch)
+                for (r in 0 until font.height) for (c in 0 until w) {
+                    if (font.isOn(ch, r, c)) {
+                        val gx = cx + c; val gy = y + r
+                        if (gx in 0..24 && gy in 0..24) clockMask[gy][gx] = true
+                    }
+                }
+            }
+            cx += font.width(ch) + font.spacing
+        }
 
-        // colon slot: always advance by colon width + spacing
-        val colonX = cx
-        if (colonOn) font.drawChar(buf, ':', colonX, y, bright)
-        cx += font.width(':') + font.spacing
-
-        // minutes
-        font.drawChar(buf, ('0'.code + m/10).toChar(), cx, y, bright)
-        cx += font.width('0') + font.spacing
-        font.drawChar(buf, ('0'.code + m%10).toChar(), cx, y, bright)
+        put(('0'.code + h/10).toChar())
+        put(('0'.code + h%10).toChar())
+        if (colonOn) put(':') else cx += font.width(':') + font.spacing
+        put(('0'.code + m/10).toChar())
+        put(('0'.code + m%10).toChar())
     }
+
 
 
     private fun drawBattery(pct: Int, y: Int, bright: Int, markMask: Boolean) {
         val label = if (pct >= FULL_THRESHOLD || isBatteryFull()) "FULL" else "%02d%%".format(pct)
         val x = centerX(label)
-
-        // draw text
-        font.draw(buf, label, x = x, y = y, bright = bright)
-
-        // mark mask for overlap erase
-        if (markMask) {
-            var cx = x
-            for (ch in label) {
-                val w = font.width(ch)
-                for (r in 0 until font.height) for (c in 0 until w) {
+        font.draw(buf, label, x, y, bright)
+        if (!markMask) return
+        var cx = x
+        for (ch in label) {
+            val w = font.width(ch)
+            for (r in 0 until font.height) for (c in 0 until w) {
+                if (font.isOn(ch, r, c)) {
                     val gx = cx + c; val gy = y + r
-                    if (gx in 0..24 && gy in 0..24 && font.isOn(ch, r, c)) {
-                        battMask[gy][gx] = true
-                    }
+                    if (gx in 0..24 && gy in 0..24) battMask[gy][gx] = true
                 }
-                cx += w + if (ch != label.last()) font.spacing else 0
             }
+            cx += w + if (ch != label.last()) font.spacing else 0
         }
     }
+
 
     private fun weightAt(y: Int, bottom: Int): Int {
         // 1.0 at bottom, ~0.35 near the top of the bar span
@@ -431,6 +492,60 @@ class RenderEngine(
         for (i in raw.indices) {
             ema[i] = ema[i] * (1f - alpha) + raw[i] * alpha
             out[i] = ema[i].toInt().coerceIn(0, 255)
+        }
+        return out
+    }
+    private fun smoothBarsWithAlpha(raw: IntArray, alpha: Float): IntArray {
+        if (ema.size != raw.size) java.util.Arrays.fill(ema, 0f)
+        val out = IntArray(raw.size)
+        for (i in raw.indices) {
+            ema[i] = ema[i] * (1f - alpha) + raw[i] * alpha
+            out[i] = ema[i].toInt().coerceIn(0, 255)
+        }
+        return out
+    }
+    private fun fftToBandsLogWindowed(
+        fft: ByteArray,
+        bands: Int,
+        sampleRateHz: Int,
+        lowHz: Int,
+        highHz: Int,
+        beta: Double = 2.0,
+        scaleLow: Double = 64.0,
+        scaleHigh: Double = 20.0
+    ): IntArray {
+        val n = fft.size / 2
+        val nyq = sampleRateHz / 2.0
+        val startBin = ((lowHz / nyq) * (n - 1)).coerceAtLeast(1.0).toInt()
+        val endBin   = ((highHz / nyq) * (n - 1)).coerceIn(2.0, (n - 1).toDouble()).toInt()
+        val span = (endBin - startBin).coerceAtLeast(bands)
+
+        // edges with beta^ curve across [startBin..endBin]
+        val edges = IntArray(bands + 1)
+        for (i in 0..bands) {
+            val t = i.toDouble() / bands
+            val f = t.pow(beta)
+            edges[i] = (startBin + f * span).toInt().coerceIn(startBin, endBin)
+            if (i > 0 && edges[i] <= edges[i - 1]) edges[i] = (edges[i - 1] + 1).coerceAtMost(endBin)
+        }
+
+        val out = IntArray(bands)
+        for (i in 0 until bands) {
+            val s = edges[i]
+            val e = edges[i + 1]
+            var acc = 0.0; var cnt = 0
+            var k = s
+            while (k < e && k * 2 + 1 < fft.size) {
+                val re = fft[k * 2].toInt()
+                val im = fft[k * 2 + 1].toInt()
+                acc += kotlin.math.hypot(re.toDouble(), im.toDouble())
+                cnt++; k++
+            }
+            val avg = if (cnt == 0) 0.0 else acc / cnt
+            val t = i.toDouble() / (bands - 1).coerceAtLeast(1)
+            val scale = scaleLow + (scaleHigh - scaleLow) * t
+            val comp = (255.0 * ln(1.0 + avg / scale) / ln(1.0 + 255.0 / scale)).toInt()
+            out[i] = comp.coerceIn(0, 255)
         }
         return out
     }
@@ -516,26 +631,23 @@ class RenderEngine(
         return g?.getOrNull(r)?.getOrNull(c) == true
     }
 
-    private fun drawColumnsMapped(cols: IntArray, baseBright: Int, eraseBatt: Boolean) {
+    private fun drawColumnsMapped(cols: IntArray, baseBright: Int,
+                                  eraseBatt: Boolean, eraseClock: Boolean) {
         for (i in 0 until COLS) {
             val x = X0 + i
-            val yTop = yTopCol[x]
-            val yBot = yBotCol[x]
+            val yTop = yTopCol[x]; val yBot = yBotCol[x]
             val span = (yBot - yTop).coerceAtLeast(1)
-
-            // height mapped to this column's visible span
             val h = (cols[i] * span / 255).coerceIn(0, span)
-            val b = quantize(compressMag(cols[i]), steps = 16).coerceAtLeast(24)
-
+            if (h == 0) continue
+            val b = quantize(compressMag(cols[i]), 16).coerceAtLeast(24)
             val yDrawTop = yBot - h
             for (yy in yBot downTo yDrawTop) {
-                if (eraseBatt && battMask[yy][x]) {
-                    buf[yy][x] = 0
-                } else {
-                    val v = (b * baseBright / 255) * weightAt(yy, yBot) / 255
-                    buf[yy][x] = max(buf[yy][x], v)
-                }
+                if (eraseBatt  && battMask[yy][x]) { buf[yy][x] = 0; continue }
+                if (eraseClock && clockMask[yy][x]) { buf[yy][x] = 0; continue }
+                val v = (b * baseBright / 255) * weightAt(yy, yBot) / 255
+                buf[yy][x] = max(buf[yy][x], v)
             }
         }
     }
+
 }

@@ -29,6 +29,14 @@
 
     <!-- Battery display -->
     <SwitchPreferenceCompat
+        android:key="hide_clock"
+        android:title="Hide clock while playing"
+        android:defaultValue="false"/>
+    <SwitchPreferenceCompat
+        android:key="erase_clock"
+        android:title="FFT erases clock pixels"
+        android:defaultValue="false"/>
+    <SwitchPreferenceCompat
         android:key="hide_batt" android:title="Hide battery while playing" android:defaultValue="false"/>
     <SwitchPreferenceCompat
         android:key="erase_batt" android:title="FFT erases battery pixels" android:defaultValue="true"/>
@@ -72,5 +80,19 @@
         android:max="100" android:min="10" android:defaultValue="55" app:showSeekBarValue="true"/>
     <SeekBarPreference android:key="release_x100" android:title="Release ×100"
         android:max="60" android:min="5" android:defaultValue="20" app:showSeekBarValue="true"/>
+
+    <SeekBarPreference android:key="high_cut_khz" android:title="High cut (kHz)"
+        android:max="22" android:min="8" android:defaultValue="12" app:showSeekBarValue="true"/>
+    <SeekBarPreference android:key="low_cut_hz" android:title="Low cut (Hz)"
+        android:max="300" android:min="20" android:defaultValue="50" app:showSeekBarValue="true"/>
+    <SeekBarPreference android:key="smooth_alpha_x100" android:title="Smooth alpha ×100"
+        android:max="90" android:min="10" android:defaultValue="35" app:showSeekBarValue="true"/>
+    <SeekBarPreference android:key="floor_after_ar" android:title="Post-envelope floor"
+        android:max="64" android:min="0" android:defaultValue="8" app:showSeekBarValue="true"/>
+    <SeekBarPreference android:key="silence_gate_sum" android:title="Silence gate (sum)"
+        android:max="500" android:min="0" android:defaultValue="40" app:showSeekBarValue="true"/>
+    <SwitchPreferenceCompat android:key="zero_on_silence"
+        android:title="Zero on silence" android:defaultValue="true"/>
+
 
 </PreferenceScreen>
