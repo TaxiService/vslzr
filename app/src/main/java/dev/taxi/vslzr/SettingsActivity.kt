@@ -1,11 +1,9 @@
 package dev.taxi.vslzr
 
-import android.content.ComponentName
 import android.content.Intent
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
 import androidx.preference.*
-import android.content.Context
 
 private const val ACTION_APPLY_PREFS = "dev.taxi.vslzr.APPLY_PREFS"
 
@@ -29,14 +27,41 @@ class SettingsFragment : PreferenceFragmentCompat(),
         findPreference<Preference>("open_toys_mgr")?.onPreferenceClickListener = this
         findPreference<Preference>("apply_now")?.onPreferenceClickListener = this
 
-        // Change handlers (auto-apply)
-        listOf(
-            "hide_batt","erase_batt","bright_viz","bar_bottom_y","bar_max_h",
-            "gate","gain_x100","gamma_x100","attack_x100","release_x100",
-            "frame_decay_idle","frame_decay_play","auto_apply"
-        ).forEach { key ->
-            findPreference<Preference>(key)?.onPreferenceChangeListener = this
+        val keys = listOf(
+            "auto_apply","use_circle_map","circle_inset","cols","rows","clock_y","batt_y",
+            "hide_batt","erase_batt","full_threshold",
+            "bright_hhmm","bright_batt","bright_viz",
+            "frame_decay_idle","frame_decay_play",
+            "bands","beta_x100","scale_low","scale_high","tilt_db",
+            "gate","gain_x100","gamma_x100","attack_x100","release_x100"
+        )
+        keys.forEach { findPreference<Preference>(it)?.onPreferenceChangeListener = this }
+
+        // numeric summaries
+        fun bind(key:String, fmt:(Int)->String) {
+            findPreference<SeekBarPreference>(key)?.summaryProvider =
+                Preference.SummaryProvider<SeekBarPreference> { p -> fmt(p.value) }
         }
+        bind("cols"){ "columns: $it" }
+        bind("rows"){ "rows: $it" }
+        bind("clock_y"){ "row: $it" }
+        bind("batt_y"){ "row: $it" }
+        bind("full_threshold"){ "≥$it% shows FULL" }
+        bind("bright_hhmm"){ "value: $it" }
+        bind("bright_batt"){ "value: $it" }
+        bind("bright_viz"){ "value: $it" }
+        bind("frame_decay_idle"){ "idle decay: $it" }
+        bind("frame_decay_play"){ "play decay: $it" }
+        bind("bands"){ "bands: $it" }
+        bind("beta_x100"){ "beta: ${"%.2f".format(it/100f)}" }
+        bind("scale_low"){ "low knee: $it" }
+        bind("scale_high"){ "high knee: $it" }
+        bind("tilt_db"){ "tilt: $it dB" }
+        bind("gate"){ "gate: $it" }
+        bind("gain_x100"){ "gain: ${"%.2f".format(it/100f)}×" }
+        bind("gamma_x100"){ "gamma: ${"%.2f".format(it/100f)}" }
+        bind("attack_x100"){ "attack: ${"%.2f".format(it/100f)}" }
+        bind("release_x100"){ "release: ${"%.2f".format(it/100f)}" }
 
         // Show formatted summaries under sliders
         fun bindSummaryInt(key: String, fmt: (Int) -> String) {
@@ -56,22 +81,22 @@ class SettingsFragment : PreferenceFragmentCompat(),
     }
 
     override fun onPreferenceChange(p: Preference, newValue: Any?): Boolean {
-        // Only broadcast if auto_apply is ON, or if user toggled auto_apply itself we do nothing extra
-        val auto = preferenceManager.sharedPreferences?.getBoolean("auto_apply", false) ?: false
-        if (auto && p.key != "auto_apply") {
-            requireContext().sendBroadcast(Intent(ACTION_APPLY_PREFS))
-        }
-        return true // let Preference save the value
+        val auto = preferenceManager.sharedPreferences?.getBoolean("auto_apply", true) ?: true
+        if (auto && p.key != "auto_apply") requireContext().sendBroadcast(Intent(ACTION_APPLY_PREFS))
+        return true
     }
 
     override fun onPreferenceClick(pref: Preference): Boolean {
         return when (pref.key) {
             "open_toys_mgr" -> {
-                val i = Intent().setClassName(
-                    "com.nothing.thirdparty",
-                    "com.nothing.thirdparty.matrix.toys.manager.ToysManagerActivity"
-                )
-                runCatching { startActivity(i) }
+                runCatching {
+                    startActivity(
+                        Intent().setClassName(
+                            "com.nothing.thirdparty",
+                            "com.nothing.thirdparty.matrix.toys.manager.ToysManagerActivity"
+                        )
+                    )
+                }
                 true
             }
             "apply_now" -> {

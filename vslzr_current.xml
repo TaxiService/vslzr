@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <boolean name="auto_apply" value="false" />
+    <int name="bar_bottom_y" value="24" />
+    <int name="attack_x100" value="100" />
+    <boolean name="hide_batt" value="true" />
+    <int name="gain_x100" value="152" />
+    <int name="frame_decay_idle" value="50" />
+    <int name="scale_low" value="34" />
+    <boolean name="erase_batt" value="true" />
+    <int name="gamma_x100" value="163" />
+    <int name="bands" value="12" />
+    <int name="bright_hhmm" value="255" />
+    <int name="clock_y" value="5" />
+    <boolean name="use_circle_map" value="true" />
+    <int name="scale_high" value="40" />
+    <int name="cols" value="25" />
+    <int name="tilt_db" value="0" />
+    <int name="release_x100" value="34" />
+    <int name="bright_batt" value="200" />
+    <int name="full_threshold" value="80" />
+    <int name="rows" value="25" />
+    <int name="frame_decay_play" value="32" />
+    <int name="batt_y" value="15" />
+    <int name="bar_max_h" value="23" />
+    <int name="bright_viz" value="124" />
+    <int name="gate" value="16" />
+    <int name="beta_x100" value="0" />
+</map>

@@ -10,17 +10,60 @@ import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
-private val COLS = 25
-private val ROWS = 25
-private val X0   = (25 - COLS) / 2
-private val Y0   = (25 - ROWS) / 2
-private val Y1   = Y0 + ROWS - 1
-var BAR_MAX_H    = ROWS
+
+// layout/mapping (used by your drawers)
+var USE_CIRCLE_MAP = true
+var CIRCLE_INSET = 0
+var COLS = 23; var ROWS = 23
+var X0 = (25 - COLS)/2; var Y0 = (25 - ROWS)/2; var Y1 = Y0 + ROWS - 1
+var CLOCK_Y = 2; var BATT_Y = 17
+var FULL_THRESHOLD = 80
+
+private var spansInsetCached = Int.MIN_VALUE
+private fun ensureSpans() {
+    if (!USE_CIRCLE_MAP) return
+    if (spansInsetCached != CIRCLE_INSET) {
+        buildColumnSpans() // your half-pixel version
+        spansInsetCached = CIRCLE_INSET
+    }
+}
+
+fun reconfig(newBands: Int, newCols: Int) {
+    if (newBands != BANDS) { BANDS = newBands.coerceIn(6, 32); ema = FloatArray(BANDS) }
+    if (newCols != COLS)   { COLS  = newCols.coerceIn(12, 25); env = FloatArray(COLS) }
+    X0 = (25 - COLS)/2; Y0 = (25 - ROWS)/2; Y1 = Y0 + ROWS - 1
+    spansInsetCached = Int.MIN_VALUE
+    ensureSpans()
+}
 
 private val yTopCol = IntArray(25)
 private val yBotCol = IntArray(25)
 private var spansBuilt = false
-var CIRCLE_INSET = 0
+
+
+private fun buildColumnSpans() {
+    val cx = 12.0
+    val cy = 12.0
+    val r  = 12.5 - CIRCLE_INSET.toDouble()   // half-pixel radius
+    val r2 = r * r
+    for (x in 0..24) {
+        val dx = x - cx
+        val d2 = r2 - dx*dx
+        if (d2 <= 0.0) {
+            val y = cy.toInt()
+            yTopCol[x] = y.coerceIn(Y0, Y1)
+            yBotCol[x] = y.coerceIn(Y0, Y1)
+            continue
+        }
+        val dy = kotlin.math.sqrt(d2)
+        val top = kotlin.math.ceil(cy - dy).toInt()     // ceil top
+        val bot = kotlin.math.floor(cy + dy).toInt()    // floor bottom
+        yTopCol[x] = top.coerceIn(Y0, Y1)
+        yBotCol[x] = bot.coerceIn(Y0, Y1)
+        if (yBotCol[x] < yTopCol[x]) yBotCol[x] = yTopCol[x] // guard
+    }
+    spansBuilt = true
+}
 
 // behavior toggles
 var FFT_ERASES_BATT        = true    // FFT turns off battery pixels on overlap
@@ -30,43 +73,54 @@ var BATT_HIDE_WHEN_PLAYING = false   // hide battery while music plays
 private val battMask = Array(25) { BooleanArray(25) }
 
 // tuning
-var FRAME_DECAY_IDLE = 220       // 0..255; higher = slower fade when idle
-var FRAME_DECAY_PLAY = 190       // faster fade while playing
+var BRIGHT_HHMM = 255; var BRIGHT_BATT = 200; var BRIGHT_VIZ = 180
+var FRAME_DECAY_IDLE = 220; var FRAME_DECAY_PLAY = 190
 
-var GATE   = 28                  // 0..255 noise gate
-var GAMMA  = 0.75f               // <1 boosts small, >1 compresses
-var GAIN   = 1.2f                // overall amplitude scale
-var ATTACK = 0.55f               // 0..1 rise speed
-var RELEASE= 0.20f               // 0..1 fall speed
-
-private val BANDS = 12
-private val ema   = FloatArray(BANDS)  // pre-smoother
-private val env   = FloatArray(COLS)   // post-resample AR envelope (size = COLS=23)
-var BAR_BOTTOM_Y = 20 // was 24; smaller = higher on screen
+// analysis/post
+var BANDS = 12
+private var ema = FloatArray(BANDS)
+private var env = FloatArray(COLS)
+var EMA_ALPHA = 0.35f
+var SCALE_LOW = 64.0; var SCALE_HIGH = 20.0; var TILT_DB = 9f
+var GATE = 28; var GAIN = 1.2f; var GAMMA = 0.75f; var ATTACK = 0.55f; var RELEASE = 0.20f
 
 class RenderEngine(
     private val ctx: Context,
     private val push: (IntArray) -> Unit
 ) {
     fun applyPrefs(p: android.content.SharedPreferences) {
-        BATT_HIDE_WHEN_PLAYING = p.getBoolean("hide_batt", false)
-        FFT_ERASES_BATT        = p.getBoolean("erase_batt", true)
-        BRIGHT_VIZ             = p.getInt("bright_viz", 180)
-        BAR_BOTTOM_Y           = p.getInt("bar_bottom_y", 18)
-        BAR_MAX_H              = p.getInt("bar_max_h", 23)
-        GATE                   = p.getInt("gate", 28)
-        GAIN                   = (p.getInt("gain_x100", 120) / 100f)
-        GAMMA                  = (p.getInt("gamma_x100", 75) / 100f)
-        ATTACK                 = (p.getInt("attack_x100", 55) / 100f)
-        RELEASE                = (p.getInt("release_x100", 20) / 100f)
-        FRAME_DECAY_IDLE       = p.getInt("frame_decay_idle", 220)
-        FRAME_DECAY_PLAY       = p.getInt("frame_decay_play", 190)
+        USE_CIRCLE_MAP = p.getBoolean("use_circle_map", true)
+        val newCols = p.getInt("cols", COLS)
+        ROWS        = p.getInt("rows", ROWS).coerceIn(8,25)
+        CIRCLE_INSET= p.getInt("circle_inset", 0)
+
+        CLOCK_Y     = p.getInt("clock_y", CLOCK_Y)
+        BATT_Y      = p.getInt("batt_y", BATT_Y)
+        FULL_THRESHOLD = p.getInt("full_threshold", FULL_THRESHOLD)
+
+        BRIGHT_HHMM = p.getInt("bright_hhmm", BRIGHT_HHMM)
+        BRIGHT_BATT = p.getInt("bright_batt", BRIGHT_BATT)
+        BRIGHT_VIZ  = p.getInt("bright_viz",  BRIGHT_VIZ)
+
+        FRAME_DECAY_IDLE = p.getInt("frame_decay_idle", FRAME_DECAY_IDLE)
+        FRAME_DECAY_PLAY = p.getInt("frame_decay_play", FRAME_DECAY_PLAY)
+
+        val newBands = p.getInt("bands", BANDS)
+        EMA_ALPHA    = p.getInt("beta_x100", 200) / 100f  // if you used this for spacing, keep separate; else remove
+        val beta     = p.getInt("beta_x100", 200) / 100.0
+        SCALE_LOW    = p.getInt("scale_low", SCALE_LOW.toInt()).toDouble()
+        SCALE_HIGH   = p.getInt("scale_high", SCALE_HIGH.toInt()).toDouble()
+        TILT_DB      = p.getInt("tilt_db", TILT_DB.toInt()).toFloat()
+
+        GATE   = p.getInt("gate", GATE)
+        GAIN   = p.getInt("gain_x100", (GAIN*100).toInt()) / 100f
+        GAMMA  = p.getInt("gamma_x100", (GAMMA*100).toInt()) / 100f
+        ATTACK = p.getInt("attack_x100", (ATTACK*100).toInt()) / 100f
+        RELEASE= p.getInt("release_x100", (RELEASE*100).toInt()) / 100f
+
+        reconfig(newBands, newCols)
     }
 
-    // Brightness knobs (0..255)16
-    var BRIGHT_HHMM = 255
-    var BRIGHT_BATT = 120
-    var BRIGHT_VIZ  = 255
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var running = false
@@ -84,17 +138,11 @@ class RenderEngine(
         }
     } catch (_: Throwable) { null }
 
-    // Bottom brighter, top dimmer
-    private val WY = IntArray(25) { y ->
-        val t = (24 - y) / 24f
-        ( (0.40f + 0.60f * (1f - t*t)) * 255 ).toInt()
-    }
-
     // ----- public controls -----
     fun start() {
-        if (!spansBuilt) buildColumnSpans()
         if (running) return
         running = true
+        ensureSpans()
         vis = tryInitVis()
 
         // seed feedback grid that “dissipates”
@@ -109,6 +157,7 @@ class RenderEngine(
             push(blit())
 
             while (running) {
+                ensureSpans()
                 val now = SystemClock.elapsedRealtime()
                 if (now - lastBattRead > 1_000L) { battPct = readBattery(); lastBattRead = now }
                 val playing = MediaBridge.isPlaying(ctx)
@@ -118,9 +167,9 @@ class RenderEngine(
                 // time (blink colon 1 Hz, 0.5 s duty)
                 val t = LocalTime.now()
                 val colonOn = (now / 500L) % 2L == 0L
-                drawHHMM(t.hour, t.minute, colonOn, y = 5, bright = BRIGHT_HHMM)
+                drawHHMM(t.hour, t.minute, colonOn, y = CLOCK_Y, bright = BRIGHT_HHMM)
                 if (!BATT_HIDE_WHEN_PLAYING || !playing) {
-                    drawBattery(readBattery(), y = 15, bright = BRIGHT_BATT, markMask = true)
+                    drawBattery(readBattery(), y = BATT_Y, bright = BRIGHT_BATT, markMask = true)
                 }
 
                 // FFT overlay if playing and visualizer ready
@@ -283,7 +332,7 @@ class RenderEngine(
 
 
     private fun drawBattery(pct: Int, y: Int, bright: Int, markMask: Boolean) {
-        val label = if (pct >= 80 || isBatteryFull()) "FULL" else "%02d%%".format(pct)
+        val label = if (pct >= FULL_THRESHOLD || isBatteryFull()) "FULL" else "%02d%%".format(pct)
         val x = centerX(label)
 
         // draw text
@@ -305,21 +354,6 @@ class RenderEngine(
         }
     }
 
-
-
-    private fun drawBars(mags: IntArray, baseBright: Int) {
-        for (x in 0 until 25) {
-            val h = (mags[x] * BAR_MAX_H / 255).coerceIn(0, BAR_MAX_H)
-            val b = quantize(compressMag(mags[x]), 16).coerceAtLeast(24)
-            val yBottom = BAR_BOTTOM_Y.coerceIn(0, 24)
-            val yTop = (yBottom - h).coerceAtLeast(0)
-            for (yy in yBottom downTo yTop) {
-                val w = weightAt(yy, yBottom)                 // brighter near bar bottom
-                val v = (b * baseBright / 255) * w / 255
-                buf[yy][x] = max(buf[yy][x], v)
-            }
-        }
-    }
     private fun weightAt(y: Int, bottom: Int): Int {
         // 1.0 at bottom, ~0.35 near the top of the bar span
         val dist = (bottom - y).coerceAtLeast(0)
@@ -504,30 +538,4 @@ class RenderEngine(
             }
         }
     }
-
-    private fun buildColumnSpans(inset: Int = CIRCLE_INSET) {
-        val r = 12 - inset
-        val r2 = r * r
-        val cx = 12
-        // for each x, compute top/bottom y inside the circle, then clip to [Y0..Y1]
-        for (x in 0..24) {
-            val dx = x - cx
-            val d2 = r2 - dx * dx
-            if (d2 <= 0) {
-                yTopCol[x] = (cx).coerceIn(Y0, Y1)
-                yBotCol[x] = (cx).coerceIn(Y0, Y1)
-                continue
-            }
-            val dy = kotlin.math.sqrt(d2.toDouble())
-            val top = (cx - dy).toInt()
-            val bot = (cx + dy).toInt()
-            yTopCol[x] = top.coerceIn(Y0, Y1)
-            yBotCol[x] = bot.coerceIn(Y0, Y1)
-        }
-        spansBuilt = true
-    }
-
-
-
-
 }
