@@ -38,7 +38,10 @@ class VslzrToy : Service() {
         }
     }
     private val messenger = Messenger(handler)
-
+    override fun onCreate() {
+        super.onCreate()
+        seedDefaultsIfNeeded(this)
+    }
     override fun onBind(intent: Intent): IBinder {
         gm = GlyphMatrixManager.getInstance(applicationContext).also { m ->
             m.init(object : GlyphMatrixManager.Callback {

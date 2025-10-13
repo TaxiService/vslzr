@@ -10,10 +10,12 @@ private const val ACTION_APPLY_PREFS = "dev.taxi.vslzr.APPLY_PREFS"
 class SettingsActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        seedDefaultsIfNeeded(this)
         supportFragmentManager.beginTransaction()
             .replace(android.R.id.content, SettingsFragment())
             .commit()
     }
+
 }
 
 class SettingsFragment : PreferenceFragmentCompat(),
