@@ -12,10 +12,15 @@ import kotlin.math.min
 import kotlin.math.pow
 private val COLS = 25
 private val ROWS = 25
-private val X0   = (25 - COLS) / 2   // 1
-private val Y0   = (25 - ROWS) / 2   // 1
-private val YBOT = Y0 + ROWS - 1     // 23
-var BAR_MAX_H    = ROWS              // 23
+private val X0   = (25 - COLS) / 2
+private val Y0   = (25 - ROWS) / 2
+private val Y1   = Y0 + ROWS - 1
+var BAR_MAX_H    = ROWS
+
+private val yTopCol = IntArray(25)
+private val yBotCol = IntArray(25)
+private var spansBuilt = false
+var CIRCLE_INSET = 0
 
 // behavior toggles
 var FFT_ERASES_BATT        = true    // FFT turns off battery pixels on overlap
@@ -87,6 +92,7 @@ class RenderEngine(
 
     // ----- public controls -----
     fun start() {
+        if (!spansBuilt) buildColumnSpans()
         if (running) return
         running = true
         vis = tryInitVis()
@@ -112,9 +118,9 @@ class RenderEngine(
                 // time (blink colon 1 Hz, 0.5 s duty)
                 val t = LocalTime.now()
                 val colonOn = (now / 500L) % 2L == 0L
-                drawHHMM(t.hour, t.minute, colonOn, y = 2, bright = BRIGHT_HHMM)
+                drawHHMM(t.hour, t.minute, colonOn, y = 5, bright = BRIGHT_HHMM)
                 if (!BATT_HIDE_WHEN_PLAYING || !playing) {
-                    drawBattery(readBattery(), y = 17, bright = BRIGHT_BATT, markMask = true)
+                    drawBattery(readBattery(), y = 15, bright = BRIGHT_BATT, markMask = true)
                 }
 
                 // FFT overlay if playing and visualizer ready
@@ -145,7 +151,7 @@ class RenderEngine(
                                 colsOut[i] = env[i].toInt().coerceIn(0, 255)
                             }
 
-                            drawColumnsSquare(colsOut, baseBright = BRIGHT_VIZ, eraseBatt = FFT_ERASES_BATT)
+                            drawColumnsMapped(colsOut, baseBright = BRIGHT_VIZ, eraseBatt = FFT_ERASES_BATT)
                         } catch (_: Throwable) {}
                     }
                 }
@@ -443,18 +449,6 @@ class RenderEngine(
         }
         return out
     }
-    private fun drawColumns(cols: IntArray, baseBright: Int) {
-        val yBottom = BAR_BOTTOM_Y.coerceIn(0, 24)
-        for (x in 0 until 25) {
-            val h = (cols[x] * BAR_MAX_H / 255).coerceIn(0, BAR_MAX_H)
-            val b = quantize(compressMag(cols[x]), steps = 16).coerceAtLeast(24)
-            val yTop = (yBottom - h).coerceAtLeast(0)
-            for (yy in yBottom downTo yTop) {
-                val v = (b * baseBright / 255) * weightAt(yy, yBottom) / 255
-                buf[yy][x] = max(buf[yy][x], v)
-            }
-        }
-    }
     private fun tiltBands(bands: IntArray, tiltDb: Float): IntArray {
         val n = bands.size
         val out = IntArray(n)
@@ -488,23 +482,51 @@ class RenderEngine(
         return g?.getOrNull(r)?.getOrNull(c) == true
     }
 
-    private fun drawColumnsSquare(cols: IntArray, baseBright: Int, eraseBatt: Boolean) {
-        val yBottom = YBOT
+    private fun drawColumnsMapped(cols: IntArray, baseBright: Int, eraseBatt: Boolean) {
         for (i in 0 until COLS) {
-            val h = (cols[i] * BAR_MAX_H / 255).coerceIn(0, BAR_MAX_H)
-            val b = quantize(compressMag(cols[i]), steps = 16).coerceAtLeast(24)
             val x = X0 + i
-            val yTop = (yBottom - h).coerceAtLeast(Y0)
-            for (yy in yBottom downTo yTop) {
+            val yTop = yTopCol[x]
+            val yBot = yBotCol[x]
+            val span = (yBot - yTop).coerceAtLeast(1)
+
+            // height mapped to this column's visible span
+            val h = (cols[i] * span / 255).coerceIn(0, span)
+            val b = quantize(compressMag(cols[i]), steps = 16).coerceAtLeast(24)
+
+            val yDrawTop = yBot - h
+            for (yy in yBot downTo yDrawTop) {
                 if (eraseBatt && battMask[yy][x]) {
-                    buf[yy][x] = 0 // turn battery pixel off on overlap
+                    buf[yy][x] = 0
                 } else {
-                    val v = (b * baseBright / 255) * weightAt(yy, yBottom) / 255
+                    val v = (b * baseBright / 255) * weightAt(yy, yBot) / 255
                     buf[yy][x] = max(buf[yy][x], v)
                 }
             }
         }
     }
+
+    private fun buildColumnSpans(inset: Int = CIRCLE_INSET) {
+        val r = 12 - inset
+        val r2 = r * r
+        val cx = 12
+        // for each x, compute top/bottom y inside the circle, then clip to [Y0..Y1]
+        for (x in 0..24) {
+            val dx = x - cx
+            val d2 = r2 - dx * dx
+            if (d2 <= 0) {
+                yTopCol[x] = (cx).coerceIn(Y0, Y1)
+                yBotCol[x] = (cx).coerceIn(Y0, Y1)
+                continue
+            }
+            val dy = kotlin.math.sqrt(d2.toDouble())
+            val top = (cx - dy).toInt()
+            val bot = (cx + dy).toInt()
+            yTopCol[x] = top.coerceIn(Y0, Y1)
+            yBotCol[x] = bot.coerceIn(Y0, Y1)
+        }
+        spansBuilt = true
+    }
+
 
 
 
