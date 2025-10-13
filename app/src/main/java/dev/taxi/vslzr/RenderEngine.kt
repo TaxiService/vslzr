@@ -10,9 +10,6 @@ import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
-
-private val BANDS = 13
-private val ema   = FloatArray(BANDS)     // pre-smoother (kept)
 private val COLS = 25
 private val ROWS = 25
 private val X0   = (25 - COLS) / 2   // 1
@@ -27,17 +24,40 @@ var BATT_HIDE_WHEN_PLAYING = false   // hide battery while music plays
 // battery mask for overlap logic
 private val battMask = Array(25) { BooleanArray(25) }
 
-private val env   = FloatArray(25)        // post-resample envelope (AR smooth)
-var NOISE_GATE = 0                        // 0..255; raise to kill more hiss
-var GAMMA      = 1.0f                      // >1 suppress small values
-var ATTACK     = 2.0f                     // faster rise
-var RELEASE    = 3.5f                     // faster fall → less linger
+// tuning
+var FRAME_DECAY_IDLE = 220       // 0..255; higher = slower fade when idle
+var FRAME_DECAY_PLAY = 190       // faster fade while playing
 
+var GATE   = 28                  // 0..255 noise gate
+var GAMMA  = 0.75f               // <1 boosts small, >1 compresses
+var GAIN   = 1.2f                // overall amplitude scale
+var ATTACK = 0.55f               // 0..1 rise speed
+var RELEASE= 0.20f               // 0..1 fall speed
+
+private val BANDS = 12
+private val ema   = FloatArray(BANDS)  // pre-smoother
+private val env   = FloatArray(COLS)   // post-resample AR envelope (size = COLS=23)
 var BAR_BOTTOM_Y = 20 // was 24; smaller = higher on screen
+
 class RenderEngine(
     private val ctx: Context,
     private val push: (IntArray) -> Unit
 ) {
+    fun applyPrefs(p: android.content.SharedPreferences) {
+        BATT_HIDE_WHEN_PLAYING = p.getBoolean("hide_batt", false)
+        FFT_ERASES_BATT        = p.getBoolean("erase_batt", true)
+        BRIGHT_VIZ             = p.getInt("bright_viz", 180)
+        BAR_BOTTOM_Y           = p.getInt("bar_bottom_y", 18)
+        BAR_MAX_H              = p.getInt("bar_max_h", 23)
+        GATE                   = p.getInt("gate", 28)
+        GAIN                   = (p.getInt("gain_x100", 120) / 100f)
+        GAMMA                  = (p.getInt("gamma_x100", 75) / 100f)
+        ATTACK                 = (p.getInt("attack_x100", 55) / 100f)
+        RELEASE                = (p.getInt("release_x100", 20) / 100f)
+        FRAME_DECAY_IDLE       = p.getInt("frame_decay_idle", 220)
+        FRAME_DECAY_PLAY       = p.getInt("frame_decay_play", 190)
+    }
+
     // Brightness knobs (0..255)16
     var BRIGHT_HHMM = 255
     var BRIGHT_BATT = 120
@@ -85,14 +105,13 @@ class RenderEngine(
             while (running) {
                 val now = SystemClock.elapsedRealtime()
                 if (now - lastBattRead > 1_000L) { battPct = readBattery(); lastBattRead = now }
-
-                clearAndDecay(if (MediaBridge.isPlaying(ctx)) 180 else 220)  // 180 ≈ faster fade
+                val playing = MediaBridge.isPlaying(ctx)
+                clearAndDecay(if (playing) FRAME_DECAY_PLAY else FRAME_DECAY_IDLE)
                 clearBattMask()
 
                 // time (blink colon 1 Hz, 0.5 s duty)
                 val t = LocalTime.now()
                 val colonOn = (now / 500L) % 2L == 0L
-                val playing = MediaBridge.isPlaying(ctx)
                 drawHHMM(t.hour, t.minute, colonOn, y = 2, bright = BRIGHT_HHMM)
                 if (!BATT_HIDE_WHEN_PLAYING || !playing) {
                     drawBattery(readBattery(), y = 17, bright = BRIGHT_BATT, markMask = true)
@@ -104,16 +123,32 @@ class RenderEngine(
                         try {
                             val fft = ByteArray(v.captureSize)
                             v.getFft(fft)
+
                             val bands  = fftToBandsLog(fft, BANDS, beta = 2.0, scaleLow = 64.0, scaleHigh = 20.0)
-                            val smooth = smoothBars(bands, alpha = 0.35f)
-                            val cols   = resampleToCols(smooth, cols = COLS)
-                            val gamma  = applyGamma(cols, gamma = 0.55f)
-                            drawColumnsSquare(gamma, baseBright = BRIGHT_VIZ, eraseBatt = FFT_ERASES_BATT)
+                            val smooth = smoothBars(bands, alpha = 0.35f)                  // pre EMA
+                            val colsIn = resampleToCols(smooth, cols = COLS)               // -> 23
+
+                            // per-column processing
+                            val colsOut = IntArray(COLS)
+                            for (i in 0 until COLS) {
+                                // gate and gain
+                                var v255 = (colsIn[i] * GAIN).toInt().coerceIn(0, 255)
+                                v255 = (v255 - GATE).coerceAtLeast(0)
+
+                                // gamma map
+                                val n = (v255 / 255f).toDouble().pow(GAMMA.toDouble()).toFloat()
+                                val target = (255f * n).toInt()
+
+                                // attack-release envelope
+                                val a = if (target > env[i].toInt()) ATTACK else RELEASE
+                                env[i] += a * (target - env[i])
+                                colsOut[i] = env[i].toInt().coerceIn(0, 255)
+                            }
+
+                            drawColumnsSquare(colsOut, baseBright = BRIGHT_VIZ, eraseBatt = FFT_ERASES_BATT)
                         } catch (_: Throwable) {}
                     }
                 }
-
-
                 push(blit())
                 delay(33)
             }

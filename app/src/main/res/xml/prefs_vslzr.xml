@@ -1,0 +1,52 @@
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <SwitchPreferenceCompat
+        android:key="auto_apply"
+        android:title="Auto-apply changes"
+        android:defaultValue="false"
+        android:summary="Update the toy immediately on any change"/>
+    <Preference android:key="open_toys_mgr"
+        android:title="Manage Glyph Toys"
+        android:summary="Add/remove and reorder toys"/>
+    <SwitchPreferenceCompat android:key="hide_batt"
+        android:title="Hide battery while playing" android:defaultValue="false"/>
+    <SwitchPreferenceCompat android:key="erase_batt"
+        android:title="FFT erases battery pixels" android:defaultValue="true"/>
+
+    <SeekBarPreference android:key="bright_viz" android:title="Visualizer brightness"
+        app:showSeekBarValue="true" android:max="255" android:min="64" android:defaultValue="180"/>
+
+    <SeekBarPreference android:key="bar_bottom_y" android:title="FFT bottom Y (0–24)"
+        app:showSeekBarValue="true" android:max="24" android:min="0" android:defaultValue="18"/>
+
+    <SeekBarPreference android:key="bar_max_h" android:title="FFT height (rows)"
+        app:showSeekBarValue="true" android:max="23" android:min="6" android:defaultValue="23"/>
+
+    <SeekBarPreference android:key="gate"  android:title="Noise gate"
+        app:showSeekBarValue="true" android:max="96" android:min="0" android:defaultValue="28"/>
+
+    <!-- scale 50..200 -> gain = value/100 -->
+    <SeekBarPreference android:key="gain_x100" android:title="Gain ×100"
+        app:showSeekBarValue="true" android:max="200" android:min="50" android:defaultValue="120"/>
+
+    <!-- scale 30..200 -> gamma = value/100 -->
+    <SeekBarPreference android:key="gamma_x100" android:title="Gamma ×100"
+        app:showSeekBarValue="true" android:max="200" android:min="30" android:defaultValue="75"/>
+
+    <!-- 10..100 -> attack = value/100; 5..60 -> release = value/100 -->
+    <SeekBarPreference android:key="attack_x100" android:title="Attack ×100"
+        app:showSeekBarValue="true" android:max="100" android:min="10" android:defaultValue="55"/>
+    <SeekBarPreference android:key="release_x100" android:title="Release ×100"
+        app:showSeekBarValue="true" android:max="60" android:min="5" android:defaultValue="20"/>
+
+    <!-- per-frame decay while idle/playing (0..255; higher = slower fade) -->
+    <SeekBarPreference android:key="frame_decay_idle" android:title="Frame decay (idle)"
+        app:showSeekBarValue="true" android:max="255" android:min="120" android:defaultValue="220"/>
+    <SeekBarPreference android:key="frame_decay_play" android:title="Frame decay (playing)"
+        app:showSeekBarValue="true" android:max="255" android:min="150" android:defaultValue="190"/>
+    <Preference
+        android:key="apply_now"
+        android:title="Apply to active toy"
+        android:summary="Sends settings to the running toy"/>
+</PreferenceScreen>

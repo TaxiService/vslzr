@@ -33,7 +33,6 @@
                 android:name="com.nothing.glyph.toy.longpress"
                 android:value="1"/>
         </service>
-
         <!-- Media session bridge (user must enable notification access in Settings).
              No <uses-permission> needed; keep the service permission here only. -->
         <service
@@ -45,5 +44,14 @@
                 <action android:name="android.service.notification.NotificationListenerService"/>
             </intent-filter>
         </service>
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="true"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
     </application>
 </manifest>
