@@ -11,16 +11,29 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
 
-private val BANDS = 23
+private val BANDS = 13
 private val ema   = FloatArray(BANDS)     // pre-smoother (kept)
+private val COLS = 25
+private val ROWS = 25
+private val X0   = (25 - COLS) / 2   // 1
+private val Y0   = (25 - ROWS) / 2   // 1
+private val YBOT = Y0 + ROWS - 1     // 23
+var BAR_MAX_H    = ROWS              // 23
+
+// behavior toggles
+var FFT_ERASES_BATT        = true    // FFT turns off battery pixels on overlap
+var BATT_HIDE_WHEN_PLAYING = false   // hide battery while music plays
+
+// battery mask for overlap logic
+private val battMask = Array(25) { BooleanArray(25) }
+
 private val env   = FloatArray(25)        // post-resample envelope (AR smooth)
 var NOISE_GATE = 0                        // 0..255; raise to kill more hiss
-var GAMMA      = 1.1f                      // >1 suppress small values
-var ATTACK     = 1.0f                     // faster rise
-var RELEASE    = 1.82f                     // faster fall → less linger
+var GAMMA      = 1.0f                      // >1 suppress small values
+var ATTACK     = 2.0f                     // faster rise
+var RELEASE    = 3.5f                     // faster fall → less linger
 
 var BAR_BOTTOM_Y = 20 // was 24; smaller = higher on screen
-var BAR_MAX_H    = 20  // rows tall (keep under ~12 to spare the clock)
 class RenderEngine(
     private val ctx: Context,
     private val push: (IntArray) -> Unit
@@ -74,46 +87,32 @@ class RenderEngine(
                 if (now - lastBattRead > 1_000L) { battPct = readBattery(); lastBattRead = now }
 
                 clearAndDecay(if (MediaBridge.isPlaying(ctx)) 180 else 220)  // 180 ≈ faster fade
+                clearBattMask()
 
                 // time (blink colon 1 Hz, 0.5 s duty)
                 val t = LocalTime.now()
                 val colonOn = (now / 500L) % 2L == 0L
-                drawHHMM(t.hour, t.minute, colonOn, y = 6, bright = BRIGHT_HHMM)
-
-                // battery bottom
-                drawBattery(battPct, y = 15, bright = BRIGHT_BATT)
+                val playing = MediaBridge.isPlaying(ctx)
+                drawHHMM(t.hour, t.minute, colonOn, y = 2, bright = BRIGHT_HHMM)
+                if (!BATT_HIDE_WHEN_PLAYING || !playing) {
+                    drawBattery(readBattery(), y = 17, bright = BRIGHT_BATT, markMask = true)
+                }
 
                 // FFT overlay if playing and visualizer ready
                 vis?.let { v ->
-                    if (MediaBridge.isPlaying(ctx)) {
+                    if (playing) {
                         try {
                             val fft = ByteArray(v.captureSize)
                             v.getFft(fft)
-
-                            // 1) 12 log bands → light EMA
                             val bands  = fftToBandsLog(fft, BANDS, beta = 2.0, scaleLow = 64.0, scaleHigh = 20.0)
                             val smooth = smoothBars(bands, alpha = 0.35f)
-
-                            // 2) resample to 25 columns
-                            val cols = resampleToCols(smooth, cols = 25)
-
-                            // 3) gate + gamma + attack/release
-                            val ar = IntArray(25)
-                            for (i in 0 until 25) {
-                                val gated = (cols[i] - NOISE_GATE).coerceAtLeast(0)
-                                val n     = (gated / 255f).toDouble().pow(GAMMA.toDouble()).toFloat()
-                                val target = (255f * n).toInt()
-
-                                val a = if (target > env[i]) ATTACK else RELEASE
-                                env[i] += a * (target - env[i])
-                                ar[i] = env[i].toInt().coerceIn(0, 255)
-                            }
-
-                            // 4) draw
-                            drawColumns(ar, baseBright = BRIGHT_VIZ)
+                            val cols   = resampleToCols(smooth, cols = COLS)
+                            val gamma  = applyGamma(cols, gamma = 0.55f)
+                            drawColumnsSquare(gamma, baseBright = BRIGHT_VIZ, eraseBatt = FFT_ERASES_BATT)
                         } catch (_: Throwable) {}
                     }
                 }
+
 
                 push(blit())
                 delay(33)
@@ -138,6 +137,7 @@ class RenderEngine(
 
     // Simple 1-bit bitmap font with variable widths
     class BitmapFont(val height: Int, var spacing: Int = 1) {
+
         private val glyphs = mutableMapOf<Char, Array<BooleanArray>>() // [row][col]
         fun drawChar(buf: Array<IntArray>, ch: Char, x: Int, y: Int, bright: Int) {
             val g = glyphs[ch] ?: return
@@ -241,10 +241,29 @@ class RenderEngine(
     }
 
 
-    private fun drawBattery(pct: Int, y: Int, bright: Int) {
-        val s = if (pct >= 100 || isBatteryFull()) "FULL" else "%02d%%".format(pct)
-        font.draw(buf, s, x = centerX(s), y = y, bright = bright)
+    private fun drawBattery(pct: Int, y: Int, bright: Int, markMask: Boolean) {
+        val label = if (pct >= 80 || isBatteryFull()) "FULL" else "%02d%%".format(pct)
+        val x = centerX(label)
+
+        // draw text
+        font.draw(buf, label, x = x, y = y, bright = bright)
+
+        // mark mask for overlap erase
+        if (markMask) {
+            var cx = x
+            for (ch in label) {
+                val w = font.width(ch)
+                for (r in 0 until font.height) for (c in 0 until w) {
+                    val gx = cx + c; val gy = y + r
+                    if (gx in 0..24 && gy in 0..24 && font.isOn(ch, r, c)) {
+                        battMask[gy][gx] = true
+                    }
+                }
+                cx += w + if (ch != label.last()) font.spacing else 0
+            }
+        }
     }
+
 
 
     private fun drawBars(mags: IntArray, baseBright: Int) {
@@ -419,5 +438,39 @@ class RenderEngine(
         }
         return out
     }
+
+    private fun clearBattMask() {
+        for (y in 0 until 25) java.util.Arrays.fill(battMask[y], false)
+    }
+
+    // expose pixel test from the font
+    private fun BitmapFont.isOn(ch: Char, r: Int, c: Int): Boolean {
+        val g = try { // access internal glyph safely
+            val f = BitmapFont::class.java.getDeclaredField("glyphs").apply { isAccessible = true }
+            @Suppress("UNCHECKED_CAST")
+            (f.get(this) as MutableMap<Char, Array<BooleanArray>>)[ch]
+        } catch (_: Throwable) { null }
+        return g?.getOrNull(r)?.getOrNull(c) == true
+    }
+
+    private fun drawColumnsSquare(cols: IntArray, baseBright: Int, eraseBatt: Boolean) {
+        val yBottom = YBOT
+        for (i in 0 until COLS) {
+            val h = (cols[i] * BAR_MAX_H / 255).coerceIn(0, BAR_MAX_H)
+            val b = quantize(compressMag(cols[i]), steps = 16).coerceAtLeast(24)
+            val x = X0 + i
+            val yTop = (yBottom - h).coerceAtLeast(Y0)
+            for (yy in yBottom downTo yTop) {
+                if (eraseBatt && battMask[yy][x]) {
+                    buf[yy][x] = 0 // turn battery pixel off on overlap
+                } else {
+                    val v = (b * baseBright / 255) * weightAt(yy, yBottom) / 255
+                    buf[yy][x] = max(buf[yy][x], v)
+                }
+            }
+        }
+    }
+
+
 
 }
