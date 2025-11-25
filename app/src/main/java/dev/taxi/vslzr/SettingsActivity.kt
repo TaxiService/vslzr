@@ -9,6 +9,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.text.InputType
 import android.widget.EditText
+import android.widget.Toast
 
 
 
@@ -49,8 +50,8 @@ class SettingsFragment : PreferenceFragmentCompat(),
             "resample_tilt_x100","col_tilt_db"
         )
         keys.forEach { findPreference<Preference>(it)?.onPreferenceChangeListener = this }
-        arrayOf("open_toys_mgr","apply_now","save_preset","load_preset","copy_preset","paste_preset")
-            .forEach { key -> findPreference<Preference>(key)?.onPreferenceClickListener = this }
+        arrayOf("open_toys_mgr","apply_now","save_preset","load_preset","copy_preset","paste_preset","delete_preset")
+            .forEach { k -> findPreference<Preference>(k)?.onPreferenceClickListener = this }
 
         // numeric summaries
         fun bind(key:String, fmt:(Int)->String) {
@@ -184,6 +185,28 @@ class SettingsFragment : PreferenceFragmentCompat(),
                         val preset = PresetManager.load(requireContext(), names[which])
                         PresetManager.apply(requireContext(), preset)
                         requireContext().sendBroadcast(Intent(ACTION_APPLY_PREFS))
+                    }
+                    .show()
+                return true
+            }
+            "delete_preset" -> {
+                val names = PresetManager.list(requireContext())
+                if (names.isEmpty()) {
+                    Toast.makeText(requireContext(), "No presets saved", Toast.LENGTH_SHORT).show()
+                    return true
+                }
+                AlertDialog.Builder(requireContext())
+                    .setTitle("Delete preset")
+                    .setItems(names.toTypedArray()) { _, which ->
+                        val name = names[which]
+                        AlertDialog.Builder(requireContext())
+                            .setMessage("Delete \"$name\"?")
+                            .setPositiveButton("Delete") { _, _ ->
+                                PresetManager.delete(requireContext(), name)
+                                Toast.makeText(requireContext(), "Deleted: $name", Toast.LENGTH_SHORT).show()
+                            }
+                            .setNegativeButton("Cancel", null)
+                            .show()
                     }
                     .show()
                 return true

@@ -10,6 +10,10 @@
             android:title="Load preset…"
             android:summary="Apply a saved preset"/>
         <Preference
+            android:key="delete_preset"
+            android:title="Delete preset…"
+            android:summary="Remove a saved preset"/>
+        <Preference
             android:key="copy_preset"
             android:title="Copy preset JSON"
             android:summary="Put current settings on the clipboard"/>
