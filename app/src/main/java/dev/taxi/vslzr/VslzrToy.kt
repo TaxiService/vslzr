@@ -41,6 +41,18 @@ class VslzrToy : Service() {
     override fun onCreate() {
         super.onCreate()
         seedDefaultsIfNeeded(this)
+
+        // Register receiver once at service creation with proper flags on API 33+
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(
+                applyReceiver,
+                IntentFilter(ACTION_APPLY_PREFS),
+                Context.RECEIVER_NOT_EXPORTED
+            )
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(applyReceiver, IntentFilter(ACTION_APPLY_PREFS))
+        }
     }
     override fun onBind(intent: Intent): IBinder {
         gm = GlyphMatrixManager.getInstance(applicationContext).also { m ->
@@ -54,18 +66,6 @@ class VslzrToy : Service() {
             })
         }
 
-        // Register receiver with proper flags on API 33+
-        if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(
-                applyReceiver,
-                IntentFilter(ACTION_APPLY_PREFS),
-                Context.RECEIVER_NOT_EXPORTED
-            )
-        } else {
-            @Suppress("UnspecifiedRegisterReceiverFlag")
-            registerReceiver(applyReceiver, IntentFilter(ACTION_APPLY_PREFS))
-        }
-
         return messenger.binder
     }
 
@@ -75,7 +75,6 @@ class VslzrToy : Service() {
     }
 
     override fun onUnbind(intent: Intent): Boolean {
-        runCatching { unregisterReceiver(applyReceiver) }
         engine?.stop(); engine = null
         pushBlack()
         runCatching { gm?.unInit() }
@@ -85,9 +84,9 @@ class VslzrToy : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        runCatching { unregisterReceiver(applyReceiver) }
         engine?.stop(); engine = null
         pushBlack()
+        runCatching { unregisterReceiver(applyReceiver) }
     }
 
     private fun startEngine() {
