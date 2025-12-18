@@ -150,7 +150,7 @@ class FontEditorDialog(
 
     /** Tiny preview view showing glyph at actual size */
     private inner class GlyphPreviewView(context: Context) : View(context) {
-        private var glyph = Array(5) { BooleanArray(5) }
+        private var glyph = Array(5) { BooleanArray(3) }
 
         private val paint = Paint().apply {
             color = 0xFFFFFFFF.toInt()
@@ -165,8 +165,10 @@ class FontEditorDialog(
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             val cellSize = 10f  // Small pixels
-            for (row in 0 until 5) {
-                for (col in 0 until 5) {
+            val rows = glyph.size
+            for (row in 0 until rows) {
+                val cols = glyph[row].size
+                for (col in 0 until cols) {
                     if (glyph[row][col]) {
                         canvas.drawRect(
                             col * cellSize,

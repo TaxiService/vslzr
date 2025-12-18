@@ -369,62 +369,203 @@ class RenderEngine(
     )
     private var font = fontFromFiveRows(DIGIT_ROWS).apply { spacing = 1 }
 
-    /** Rebuild font with custom glyphs from SharedPreferences */
+    // Slot-based multi-font system
+    private var fontLibrary = mutableMapOf<String, BitmapFont>()
+    private var clockSlots = ClockSlotConfig()
+    private var batterySlots = BatterySlotConfig()
+
+    /** Rebuild fonts and load slot configurations */
     private fun rebuildFont(p: android.content.SharedPreferences) {
-        // Start with default font
+        // Build default font
         font = fontFromFiveRows(DIGIT_ROWS).apply { spacing = 1 }
 
-        // Load and apply custom glyphs
+        // Load custom fonts from library
+        fontLibrary.clear()
+        val customFonts = FontLibrary.loadFonts(p)
+        for ((name, fontDef) in customFonts) {
+            fontLibrary[name] = createBitmapFont(fontDef)
+        }
+
+        // Load slot configurations
+        clockSlots = FontLibrary.loadClockSlots(p)
+        batterySlots = FontLibrary.loadBatterySlots(p)
+
+        // Also load legacy custom font for backward compatibility
         val customGlyphs = CustomFontStorage.load(p)
         for ((ch, rows) in customGlyphs) {
             font.add(ch, rows)
         }
     }
 
+    /** Create a BitmapFont from a FontDefinition */
+    private fun createBitmapFont(fontDef: FontDefinition): BitmapFont {
+        val bitmapFont = BitmapFont(height = fontDef.height, spacing = 1)
+        for ((ch, rows) in fontDef.glyphs) {
+            bitmapFont.add(ch, rows)
+        }
+        return bitmapFont
+    }
+
+    /** Get font for a specific slot, fallback to default */
+    private fun getFontForSlot(slotFontName: String?): BitmapFont {
+        return if (slotFontName != null) {
+            fontLibrary[slotFontName] ?: font
+        } else {
+            font
+        }
+    }
+
     private fun centerX(text: String) = ((25 - font.measure(text)).coerceAtLeast(0)) / 2
 
     private fun drawHHMM(h: Int, m: Int, colonOn: Boolean, y: Int, bright: Int, markMask: Boolean) {
-        val template = "00:00"
-        var cx = centerX(template)
+        // Get fonts for each slot (enables asymmetric designs!)
+        val fontHourTens = getFontForSlot(clockSlots.hourTens)
+        val fontHourOnes = getFontForSlot(clockSlots.hourOnes)
+        val fontColon = getFontForSlot(clockSlots.colon)
+        val fontMinTens = getFontForSlot(clockSlots.minuteTens)
+        val fontMinOnes = getFontForSlot(clockSlots.minuteOnes)
 
-        fun put(ch: Char) {
-            font.draw(buf, ch.toString(), cx, y, bright)
-            if (markMask) {
-                val w = font.width(ch)
-                for (r in 0 until font.height) for (c in 0 until w) {
-                    if (font.isOn(ch, r, c)) {
-                        val gx = cx + c; val gy = y + r
-                        if (gx in 0..24 && gy in 0..24) clockMask[gy][gx] = true
+        // Characters to display
+        val hourTens = ('0'.code + h/10).toChar()
+        val hourOnes = ('0'.code + h%10).toChar()
+        val colon = ':'
+        val minTens = ('0'.code + m/10).toChar()
+        val minOnes = ('0'.code + m%10).toChar()
+
+        // Helper to get actual width (fallback to default font if glyph missing)
+        fun actualWidth(ch: Char, f: BitmapFont): Int {
+            val w = f.width(ch)
+            return if (w == 0 && f != font) font.width(ch) else w
+        }
+        fun actualSpacing(f: BitmapFont): Int {
+            return f.spacing
+        }
+
+        // Calculate total width for centering
+        val totalWidth = actualWidth(hourTens, fontHourTens) + actualSpacing(fontHourTens) +
+                        actualWidth(hourOnes, fontHourOnes) + actualSpacing(fontHourOnes) +
+                        actualWidth(colon, fontColon) + actualSpacing(fontColon) +
+                        actualWidth(minTens, fontMinTens) + actualSpacing(fontMinTens) +
+                        actualWidth(minOnes, fontMinOnes)
+
+        var cx = ((25 - totalWidth).coerceAtLeast(0)) / 2
+
+        fun putChar(ch: Char, f: BitmapFont, visible: Boolean = true) {
+            // Fall back to default font if character doesn't exist in custom font
+            val actualFont = if (f.width(ch) == 0 && f != font) font else f
+
+            if (visible) {
+                actualFont.draw(buf, ch.toString(), cx, y, bright)
+                if (markMask) {
+                    val w = actualFont.width(ch)
+                    for (r in 0 until actualFont.height) for (c in 0 until w) {
+                        if (actualFont.isOn(ch, r, c)) {
+                            val gx = cx + c; val gy = y + r
+                            if (gx in 0..24 && gy in 0..24) clockMask[gy][gx] = true
+                        }
                     }
                 }
             }
-            cx += font.width(ch) + font.spacing
+            cx += actualFont.width(ch) + actualFont.spacing
         }
 
-        put(('0'.code + h/10).toChar())
-        put(('0'.code + h%10).toChar())
-        if (colonOn) put(':') else cx += font.width(':') + font.spacing
-        put(('0'.code + m/10).toChar())
-        put(('0'.code + m%10).toChar())
+        // Draw each character with its slot-specific font!
+        putChar(hourTens, fontHourTens)
+        putChar(hourOnes, fontHourOnes)
+        putChar(colon, fontColon, colonOn)
+        putChar(minTens, fontMinTens)
+        putChar(minOnes, fontMinOnes)
     }
 
 
 
     private fun drawBattery(pct: Int, y: Int, bright: Int, markMask: Boolean) {
-        val label = if (pct >= FULL_THRESHOLD || isBatteryFull()) "FULL" else "%02d%%".format(pct)
-        val x = centerX(label)
-        font.draw(buf, label, x, y, bright)
-        if (!markMask) return
-        var cx = x
-        for (ch in label) {
-            val w = font.width(ch)
-            for (r in 0 until font.height) for (c in 0 until w) {
-                if (font.isOn(ch, r, c)) {
-                    val gx = cx + c; val gy = y + r
-                    if (gx in 0..24 && gy in 0..24) battMask[gy][gx] = true
-                }
+        val isFull = pct >= FULL_THRESHOLD || isBatteryFull()
+
+        if (isFull) {
+            // Draw "FULL" with slot-specific fonts for each letter
+            val fontF = getFontForSlot(batterySlots.letterF)
+            val fontU = getFontForSlot(batterySlots.letterU)
+            val fontL1 = getFontForSlot(batterySlots.letterL1)
+            val fontL2 = getFontForSlot(batterySlots.letterL2)
+
+            // Helper to get actual width (fallback to default font if glyph missing)
+            fun actualWidth(ch: Char, f: BitmapFont): Int {
+                val w = f.width(ch)
+                return if (w == 0 && f != font) font.width(ch) else w
             }
-            cx += w + if (ch != label.last()) font.spacing else 0
+
+            val totalWidth = actualWidth('F', fontF) + fontF.spacing +
+                            actualWidth('U', fontU) + fontU.spacing +
+                            actualWidth('L', fontL1) + fontL1.spacing +
+                            actualWidth('L', fontL2)
+
+            var cx = ((25 - totalWidth).coerceAtLeast(0)) / 2
+
+            fun putChar(ch: Char, f: BitmapFont) {
+                // Fall back to default font if character doesn't exist in custom font
+                val actualFont = if (f.width(ch) == 0 && f != font) font else f
+
+                actualFont.draw(buf, ch.toString(), cx, y, bright)
+                if (markMask) {
+                    val w = actualFont.width(ch)
+                    for (r in 0 until actualFont.height) for (c in 0 until w) {
+                        if (actualFont.isOn(ch, r, c)) {
+                            val gx = cx + c; val gy = y + r
+                            if (gx in 0..24 && gy in 0..24) battMask[gy][gx] = true
+                        }
+                    }
+                }
+                cx += actualFont.width(ch) + actualFont.spacing
+            }
+
+            putChar('F', fontF)
+            putChar('U', fontU)
+            putChar('L', fontL1)
+            putChar('L', fontL2)
+
+        } else {
+            // Draw percentage "XX%" with slot-specific fonts
+            val fontDigit1 = getFontForSlot(batterySlots.digit1)
+            val fontDigit2 = getFontForSlot(batterySlots.digit2)
+            val fontPercent = getFontForSlot(batterySlots.percent)
+
+            val d1 = ('0'.code + pct / 10).toChar()
+            val d2 = ('0'.code + pct % 10).toChar()
+            val pc = '%'
+
+            // Helper to get actual width (fallback to default font if glyph missing)
+            fun actualWidth(ch: Char, f: BitmapFont): Int {
+                val w = f.width(ch)
+                return if (w == 0 && f != font) font.width(ch) else w
+            }
+
+            val totalWidth = actualWidth(d1, fontDigit1) + fontDigit1.spacing +
+                            actualWidth(d2, fontDigit2) + fontDigit2.spacing +
+                            actualWidth(pc, fontPercent)
+
+            var cx = ((25 - totalWidth).coerceAtLeast(0)) / 2
+
+            fun putChar(ch: Char, f: BitmapFont) {
+                // Fall back to default font if character doesn't exist in custom font
+                val actualFont = if (f.width(ch) == 0 && f != font) font else f
+
+                actualFont.draw(buf, ch.toString(), cx, y, bright)
+                if (markMask) {
+                    val w = actualFont.width(ch)
+                    for (r in 0 until actualFont.height) for (c in 0 until w) {
+                        if (actualFont.isOn(ch, r, c)) {
+                            val gx = cx + c; val gy = y + r
+                            if (gx in 0..24 && gy in 0..24) battMask[gy][gx] = true
+                        }
+                    }
+                }
+                cx += actualFont.width(ch) + actualFont.spacing
+            }
+
+            putChar(d1, fontDigit1)
+            putChar(d2, fontDigit2)
+            putChar(pc, fontPercent)
         }
     }
 

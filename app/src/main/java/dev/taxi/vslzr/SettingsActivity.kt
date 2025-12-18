@@ -50,7 +50,7 @@ class SettingsFragment : PreferenceFragmentCompat(),
             "resample_tilt_x100","col_tilt_db"
         )
         keys.forEach { findPreference<Preference>(it)?.onPreferenceChangeListener = this }
-        arrayOf("open_toys_mgr","apply_now","save_preset","load_preset","copy_preset","paste_preset","delete_preset","edit_font")
+        arrayOf("open_toys_mgr","apply_now","save_preset","load_preset","copy_preset","paste_preset","delete_preset","edit_font","manage_fonts","clock_slots","battery_slots")
             .forEach { k -> findPreference<Preference>(k)?.onPreferenceClickListener = this }
 
         // numeric summaries
@@ -252,6 +252,24 @@ class SettingsFragment : PreferenceFragmentCompat(),
                     // Trigger hot-reload
                     requireContext().sendBroadcast(Intent(ACTION_APPLY_PREFS))
                 }.show(existingFont)
+                return true
+            }
+            "manage_fonts" -> {
+                FontManagerDialog(requireContext(), preferenceManager.sharedPreferences!!) {
+                    requireContext().sendBroadcast(Intent(ACTION_APPLY_PREFS))
+                }.show()
+                return true
+            }
+            "clock_slots" -> {
+                ClockSlotAssignmentDialog(requireContext(), preferenceManager.sharedPreferences!!) {
+                    requireContext().sendBroadcast(Intent(ACTION_APPLY_PREFS))
+                }.show()
+                return true
+            }
+            "battery_slots" -> {
+                BatterySlotAssignmentDialog(requireContext(), preferenceManager.sharedPreferences!!) {
+                    requireContext().sendBroadcast(Intent(ACTION_APPLY_PREFS))
+                }.show()
                 return true
             }
         }

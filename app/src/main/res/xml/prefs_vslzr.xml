@@ -35,10 +35,24 @@
         android:title="Manage Glyph Toys" android:summary="Activate or reorder toys"/>
 
     <!-- Font customization -->
-    <Preference
-        android:key="edit_font"
-        android:title="Edit Custom Font"
-        android:summary="Design custom glyphs for clock and battery text"/>
+    <PreferenceCategory android:title="Font System">
+        <Preference
+            android:key="manage_fonts"
+            android:title="Manage Font Library"
+            android:summary="Create, edit, and delete custom fonts"/>
+        <Preference
+            android:key="clock_slots"
+            android:title="Clock Font Slots"
+            android:summary="Assign fonts to each clock position (HH:MM)"/>
+        <Preference
+            android:key="battery_slots"
+            android:title="Battery Font Slots"
+            android:summary="Assign fonts to battery display (XX% / FULL)"/>
+        <Preference
+            android:key="edit_font"
+            android:title="[Legacy] Edit Custom Font"
+            android:summary="Old single-font editor"/>
+    </PreferenceCategory>
 
     <!-- Layout / mapping -->
     <SwitchPreferenceCompat
