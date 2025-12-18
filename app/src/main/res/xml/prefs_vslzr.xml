@@ -23,37 +23,6 @@
             android:summary="Read JSON from clipboard and apply"/>
     </PreferenceCategory>
 
-    <!-- High-end recovery + mapping -->
-    <SeekBarPreference
-        android:key="high_cut_khz"
-        android:title="High cut (kHz)"
-        android:max="22" android:min="10" android:defaultValue="18"
-        app:showSeekBarValue="true"/>
-
-    <SeekBarPreference
-        android:key="beta_x100"
-        android:title="Log spacing beta ×100"
-        android:max="300" android:min="120" android:defaultValue="180"
-        app:showSeekBarValue="true"/>
-
-    <SeekBarPreference
-        android:key="resample_tilt_x100"
-        android:title="Resample tilt ×100"
-        android:max="300" android:min="100" android:defaultValue="170"
-        app:showSeekBarValue="true"/>
-
-    <SeekBarPreference
-        android:key="col_tilt_db"
-        android:title="Column high-shelf (dB)"
-        android:max="18" android:min="0" android:defaultValue="9"
-        app:showSeekBarValue="true"/>
-
-    <SeekBarPreference
-        android:key="floor_after_ar"
-        android:title="Post-envelope floor"
-        android:max="32" android:min="0" android:defaultValue="4"
-        app:showSeekBarValue="true"/>
-
     <!-- Live control -->
     <SwitchPreferenceCompat
         android:key="auto_apply" android:title="Auto-apply changes"
@@ -64,6 +33,12 @@
 
     <Preference android:key="open_toys_mgr"
         android:title="Manage Glyph Toys" android:summary="Activate or reorder toys"/>
+
+    <!-- Font customization -->
+    <Preference
+        android:key="edit_font"
+        android:title="Edit Custom Font"
+        android:summary="Design custom glyphs for clock and battery text"/>
 
     <!-- Layout / mapping -->
     <SwitchPreferenceCompat
@@ -113,14 +88,25 @@
     <!-- FFT analysis -->
     <SeekBarPreference android:key="bands" android:title="Analysis bands"
         android:max="32" android:min="6" android:defaultValue="12" app:showSeekBarValue="true"/>
+    <SeekBarPreference android:key="low_cut_hz" android:title="Low cut (Hz)"
+        android:max="300" android:min="20" android:defaultValue="50" app:showSeekBarValue="true"/>
+    <SeekBarPreference android:key="high_cut_khz" android:title="High cut (kHz)"
+        android:max="22" android:min="8" android:defaultValue="12" app:showSeekBarValue="true"/>
     <SeekBarPreference android:key="beta_x100" android:title="Log spacing beta ×100"
         android:max="300" android:min="100" android:defaultValue="200" app:showSeekBarValue="true"/>
+    <SeekBarPreference
+        android:key="resample_tilt_x100"
+        android:title="Resample tilt ×100"
+        android:max="300" android:min="100" android:defaultValue="170"
+        app:showSeekBarValue="true"/>
+    <SeekBarPreference android:key="col_tilt_db" android:title="Column high-shelf (dB)"
+        android:max="18" android:min="0" android:defaultValue="0" app:showSeekBarValue="true"/>
     <SeekBarPreference android:key="scale_low" android:title="Low-band knee"
         android:max="128" android:min="8" android:defaultValue="64" app:showSeekBarValue="true"/>
     <SeekBarPreference android:key="scale_high" android:title="High-band knee"
         android:max="128" android:min="8" android:defaultValue="20" app:showSeekBarValue="true"/>
-    <SeekBarPreference android:key="tilt_db" android:title="High tilt (dB)"
-        android:max="18" android:min="0" android:defaultValue="9" app:showSeekBarValue="true"/>
+    <SeekBarPreference android:key="smooth_alpha_x100" android:title="Smooth alpha ×100"
+        android:max="90" android:min="10" android:defaultValue="35" app:showSeekBarValue="true"/>
 
     <!-- Post-processing -->
     <SeekBarPreference android:key="gate"  android:title="Noise gate"
@@ -133,13 +119,6 @@
         android:max="100" android:min="10" android:defaultValue="55" app:showSeekBarValue="true"/>
     <SeekBarPreference android:key="release_x100" android:title="Release ×100"
         android:max="60" android:min="5" android:defaultValue="20" app:showSeekBarValue="true"/>
-
-    <SeekBarPreference android:key="high_cut_khz" android:title="High cut (kHz)"
-        android:max="22" android:min="8" android:defaultValue="12" app:showSeekBarValue="true"/>
-    <SeekBarPreference android:key="low_cut_hz" android:title="Low cut (Hz)"
-        android:max="300" android:min="20" android:defaultValue="50" app:showSeekBarValue="true"/>
-    <SeekBarPreference android:key="smooth_alpha_x100" android:title="Smooth alpha ×100"
-        android:max="90" android:min="10" android:defaultValue="35" app:showSeekBarValue="true"/>
     <SeekBarPreference android:key="floor_after_ar" android:title="Post-envelope floor"
         android:max="64" android:min="0" android:defaultValue="8" app:showSeekBarValue="true"/>
     <SeekBarPreference android:key="silence_gate_sum" android:title="Silence gate (sum)"

@@ -50,7 +50,7 @@ class SettingsFragment : PreferenceFragmentCompat(),
             "resample_tilt_x100","col_tilt_db"
         )
         keys.forEach { findPreference<Preference>(it)?.onPreferenceChangeListener = this }
-        arrayOf("open_toys_mgr","apply_now","save_preset","load_preset","copy_preset","paste_preset","delete_preset")
+        arrayOf("open_toys_mgr","apply_now","save_preset","load_preset","copy_preset","paste_preset","delete_preset","edit_font")
             .forEach { k -> findPreference<Preference>(k)?.onPreferenceClickListener = this }
 
         // numeric summaries
@@ -233,6 +233,25 @@ class SettingsFragment : PreferenceFragmentCompat(),
                 }.onFailure {
                     android.widget.Toast.makeText(requireContext(), "Invalid JSON", android.widget.Toast.LENGTH_SHORT).show()
                 }
+                return true
+            }
+            "edit_font" -> {
+                val prefs = preferenceManager.sharedPreferences ?: return false
+                val existingFont = CustomFontStorage.load(prefs)
+
+                FontEditorDialog(requireContext()) { newFont ->
+                    if (newFont.isEmpty()) {
+                        // User clicked "Reset to Default"
+                        CustomFontStorage.clear(prefs)
+                        Toast.makeText(requireContext(), "Font reset to default", Toast.LENGTH_SHORT).show()
+                    } else {
+                        // Save custom font
+                        CustomFontStorage.save(prefs, newFont)
+                        Toast.makeText(requireContext(), "Custom font saved", Toast.LENGTH_SHORT).show()
+                    }
+                    // Trigger hot-reload
+                    requireContext().sendBroadcast(Intent(ACTION_APPLY_PREFS))
+                }.show(existingFont)
                 return true
             }
         }

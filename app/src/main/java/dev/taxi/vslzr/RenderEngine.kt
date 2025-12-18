@@ -104,7 +104,7 @@ var BANDS = 12
 private var ema = FloatArray(BANDS)
 private var env = FloatArray(COLS)
 var EMA_ALPHA = 0.35f
-var SCALE_LOW = 64.0; var SCALE_HIGH = 20.0; var TILT_DB = 9f
+var SCALE_LOW = 64.0; var SCALE_HIGH = 20.0
 var GATE = 28; var GAIN = 1.2f; var GAMMA = 0.75f; var ATTACK = 0.55f; var RELEASE = 0.20f
 
 class RenderEngine(
@@ -112,6 +112,9 @@ class RenderEngine(
     private val push: (IntArray) -> Unit
 ) {
     fun applyPrefs(p: android.content.SharedPreferences) {
+        // Rebuild font with any custom glyphs
+        rebuildFont(p)
+
         //USE_CIRCLE_MAP = p.getBoolean("use_circle_map", true)
         val newCols = p.getInt("cols", COLS)
         ROWS        = p.getInt("rows", ROWS).coerceIn(8,25)
@@ -151,7 +154,6 @@ class RenderEngine(
         val beta     = p.getInt("beta_x100", 200) / 100.0
         SCALE_LOW    = p.getInt("scale_low", SCALE_LOW.toInt()).toDouble()
         SCALE_HIGH   = p.getInt("scale_high", SCALE_HIGH.toInt()).toDouble()
-        TILT_DB      = p.getInt("tilt_db", TILT_DB.toInt()).toFloat()
 
         GATE   = p.getInt("gate", GATE)
         GAIN   = p.getInt("gain_x100", (GAIN*100).toInt()) / 100f
@@ -365,7 +367,19 @@ class RenderEngine(
         "101001001000001000100010101001001010001",
         "010011101110110000101100010001001100010"
     )
-    private val font = fontFromFiveRows(DIGIT_ROWS).apply { spacing = 1 }
+    private var font = fontFromFiveRows(DIGIT_ROWS).apply { spacing = 1 }
+
+    /** Rebuild font with custom glyphs from SharedPreferences */
+    private fun rebuildFont(p: android.content.SharedPreferences) {
+        // Start with default font
+        font = fontFromFiveRows(DIGIT_ROWS).apply { spacing = 1 }
+
+        // Load and apply custom glyphs
+        val customGlyphs = CustomFontStorage.load(p)
+        for ((ch, rows) in customGlyphs) {
+            font.add(ch, rows)
+        }
+    }
 
     private fun centerX(text: String) = ((25 - font.measure(text)).coerceAtLeast(0)) / 2
 
@@ -597,16 +611,6 @@ class RenderEngine(
             val i1 = (i0 + 1).coerceAtMost(maxIdx)
             val f  = pos - i0
             out[x] = ((1f - f) * bands[i0] + f * bands[i1]).toInt().coerceIn(0, 255)
-        }
-        return out
-    }
-    private fun tiltBands(bands: IntArray, tiltDb: Float): IntArray {
-        val n = bands.size
-        val out = IntArray(n)
-        for (i in 0 until n) {
-            val t = i.toFloat() / (n - 1).coerceAtLeast(1)
-            val gain = 10.0.pow((tiltDb * t) / 20.0).toFloat()
-            out[i] = (bands[i] * gain).toInt().coerceIn(0, 255)
         }
         return out
     }

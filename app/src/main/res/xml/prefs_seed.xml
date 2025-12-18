@@ -21,7 +21,7 @@
     <int name="low_cut_hz" value="1" />
     <boolean name="zero_on_silence" value="false" />
     <boolean name="hide_clock" value="false" />
-    <int name="tilt_db" value="0" />
+    <int name="col_tilt_db" value="0" />
     <int name="release_x100" value="60" />
     <int name="bright_batt" value="200" />
     <int name="full_threshold" value="80" />
